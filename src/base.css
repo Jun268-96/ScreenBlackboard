@@ -1,0 +1,1018 @@
+/* 기본 스타일 - 세련된 칠판 디자인 */
+:root {
+  --chalkboard: #262626;
+  --chalkboard-dark: #1a1a1a;
+  --chalk: #ffffff;
+  --chalk-dim: rgba(255, 255, 255, 0.7);
+  --accent: #4d94ff;
+  --gray-600: #4b5563;
+  --gray-700: #374151;
+  --red-500: #ef4444;
+  --yellow-400: #fbbf24;
+  --green-400: #34d399;
+  --blue-400: #60a5fa;
+  --purple-400: #a78bfa;
+  --pink-400: #f472b6;
+}
+
+/* 기본 리셋 */
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+body, html {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  font-family: 'Malgun Gothic', sans-serif;
+  background-color: var(--chalkboard);
+  color: var(--chalk);
+}
+
+/* 타이틀바 - 세련된 디자인 */
+#titleBar {
+  background-color: var(--chalkboard-dark);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0 1rem;
+  height: 3rem;
+  user-select: none;
+  -webkit-app-region: drag;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.window-title {
+  font-size: 1.1rem;
+  letter-spacing: 0.5px;
+}
+
+#titleBar button {
+  -webkit-app-region: no-drag;
+  background: none;
+  border: none;
+  color: var(--chalk-dim);
+  cursor: pointer;
+  padding: 0.35rem;
+  border-radius: 4px;
+  transition: all 0.2s ease;
+}
+
+#titleBar button:hover {
+  color: var(--chalk);
+  background-color: rgba(255, 255, 255, 0.1);
+}
+
+#titleBar button#closeButton:hover {
+  color: var(--chalk);
+  background-color: var(--red-500);
+}
+
+#titleBar button.active {
+  color: var(--yellow-400);
+}
+
+.window-controls {
+  display: flex;
+  gap: 0.5rem;
+}
+
+/* 툴바 - 세련된 디자인 */
+.toolbar {
+  background-color: var(--chalkboard-dark);
+  padding: 0.75rem 1rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  position: relative;
+  z-index: 10;
+}
+
+.toolbar-group {
+  display: flex;
+  gap: 0.25rem;
+  align-items: center;
+}
+
+.toolbar button {
+  padding: 0.5rem;
+  background: none;
+  border: none;
+  color: var(--chalk-dim);
+  border-radius: 0.25rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+}
+
+.toolbar button:hover {
+  background-color: rgba(255, 255, 255, 0.1);
+  color: var(--chalk);
+}
+
+.toolbar button.active {
+  background-color: rgba(255, 255, 255, 0.15);
+  color: var(--accent);
+}
+
+.toolbar .divider {
+  width: 1px;
+  height: 1.75rem;
+  background-color: var(--gray-600);
+  margin: 0 0.5rem;
+}
+
+/* 색상 선택기 디자인 */
+.color-picker-container {
+  position: relative;
+}
+
+#colorPicker {
+  height: 28px;
+  width: 28px;
+  border-radius: 50%;
+  cursor: pointer;
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  padding: 0;
+  position: relative;
+  overflow: hidden;
+  transition: all 0.2s ease;
+}
+
+#colorPicker:hover, #colorPicker:focus {
+  border-color: var(--chalk);
+  transform: scale(1.05);
+}
+
+.predefined-colors {
+  display: none;
+  position: absolute;
+  top: 100%;
+  left: 0;
+  background-color: var(--chalkboard-dark);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  padding: 0.5rem;
+  margin-top: 0.5rem;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+  z-index: 100;
+  flex-wrap: wrap;
+  width: 150px;
+  gap: 0.25rem;
+}
+
+.predefined-colors.show {
+  display: flex;
+}
+
+.color-swatch {
+  width: 25px;
+  height: 25px;
+  border-radius: 50%;
+  cursor: pointer;
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  transition: all 0.2s ease;
+}
+
+.color-swatch:hover {
+  transform: scale(1.1);
+  border-color: var(--chalk);
+}
+
+/* 글자 크기 조절 */
+.font-size-control {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.font-size-label {
+  color: var(--chalk-dim);
+  margin-right: 0.25rem;
+}
+
+/* 새로운 크기 입력 그룹 */
+.font-size-input-group {
+  display: flex;
+  align-items: center;
+  background-color: var(--chalkboard-dark);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+  overflow: hidden;
+  transition: all 0.2s ease;
+}
+
+.font-size-input-group:hover {
+  border-color: rgba(255, 255, 255, 0.4);
+}
+
+.font-size-input-group:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(77, 148, 255, 0.2);
+}
+
+/* 크기 입력 필드 */
+.font-size-input {
+  background: transparent;
+  border: none;
+  color: var(--chalk);
+  font-size: 14px;
+  width: 60px;
+  height: 30px;
+  padding: 0 8px;
+  text-align: center;
+  outline: none;
+  -moz-appearance: textfield; /* Firefox에서 스피너 숨기기 */
+}
+
+.font-size-input::-webkit-outer-spin-button,
+.font-size-input::-webkit-inner-spin-button {
+  -webkit-appearance: none; /* Chrome/Safari에서 스피너 숨기기 */
+  margin: 0;
+}
+
+.font-size-input::placeholder {
+  color: var(--chalk-dim);
+}
+
+/* 스텝 버튼 컨테이너 */
+.font-size-stepper {
+  display: flex;
+  flex-direction: row;
+  border-left: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+/* 스텝 버튼 */
+.font-size-step-btn {
+  background: transparent;
+  border: none;
+  color: var(--chalk-dim);
+  cursor: pointer;
+  width: 18px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+  user-select: none;
+}
+
+.font-size-step-btn:hover {
+  background-color: rgba(255, 255, 255, 0.1);
+  color: var(--chalk);
+}
+
+.font-size-step-btn:active {
+  background-color: rgba(255, 255, 255, 0.2);
+}
+
+.font-size-step-btn:first-child {
+  border-right: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+/* 혼합 크기 상태 표시 */
+.font-size-input.mixed {
+  color: var(--chalk-dim);
+  font-style: italic;
+}
+
+.font-size-input.mixed::placeholder {
+  content: "혼합";
+}
+
+.font-size-select {
+  background-color: var(--chalkboard-dark);
+  color: var(--chalk);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+  padding: 0.25rem 0.5rem;
+  font-size: 14px;
+  height: 30px;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12' fill='none'%3E%3Cpath d='M2.5 4.5L6 8L9.5 4.5' stroke='white' stroke-opacity='0.7' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.5rem center;
+  padding-right: 1.5rem;
+}
+
+.font-size-select:hover {
+  border-color: rgba(255, 255, 255, 0.4);
+}
+
+.font-size-select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+/* 칠판 영역 - 세련된 디자인 */
+.chalkboard {
+  padding: 2rem;
+  height: calc(100vh - 7rem); /* 타이틀바 + 툴바 높이 감안 */
+  overflow: auto;
+  outline: none;
+  user-select: text;
+  caret-color: var(--chalk);
+  font-size: 72px; /* 기본 글자 크기 */
+  line-height: 1.3; /* 기본 줄 간격 - 동적으로 조정됨 */
+  background-image: radial-gradient(circle at center, #2c2c2c 0%, #1e1e1e 100%);
+  box-shadow: inset 0 0 50px rgba(0, 0, 0, 0.5);
+  transition: background-color 0.3s ease;
+  
+  /* 텍스트 렌더링 최적화 */
+  font-feature-settings: "liga", "kern";
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  
+  /* 텍스트 간격 최적화 */
+  word-spacing: 0.1em;
+  letter-spacing: 0.02em;
+}
+
+.chalkboard:focus {
+  outline: none;
+}
+
+/* 스타일 마커 - 새로운 시스템을 위한 스타일 */
+.chalkboard .style-marker {
+  display: inline;
+  position: relative;
+}
+
+.chalkboard .style-marker:empty {
+  display: inline-block;
+  width: 0;
+  height: 1em;
+}
+
+/* 통합 폰트 크기 시스템 - 최고 우선순위로 강제 적용 */
+.chalkboard .unified-font-size {
+  /* 기본 텍스트 렌더링 품질 향상 */
+  text-rendering: optimizeLegibility !important;
+  -webkit-font-smoothing: antialiased !important;
+  -moz-osx-font-smoothing: grayscale !important;
+  font-feature-settings: "kern" 1 !important;
+  
+  /* 중첩된 폰트 크기 오버라이드 방지 - 최고 우선순위 */
+  font-size: inherit !important;
+  line-height: inherit !important;
+  
+  /* 다른 모든 폰트 관련 스타일 무력화 */
+  font-family: inherit !important;
+  
+  /* 선택 효과 */
+  transition: all 0.2s ease;
+}
+
+/* 통합 폰트 크기 내부 요소들 - 강제 우선순위 */
+.chalkboard .unified-font-size *,
+.chalkboard .unified-font-size *:before,
+.chalkboard .unified-font-size *:after {
+  /* 중첩된 폰트 크기 완전히 무시 - 최고 우선순위 */
+  font-size: inherit !important;
+  line-height: inherit !important;
+  font-family: inherit !important;
+  
+  /* 텍스트 장식만 허용 */
+  font-weight: inherit !important;
+  font-style: inherit !important;
+  text-decoration: inherit !important;
+}
+
+/* 새로운 폰트 크기 정리 시스템 - 강제 우선순위 */
+.chalkboard .unified-font-size b,
+.chalkboard .unified-font-size strong {
+  font-weight: bold !important;
+  font-size: inherit !important;
+  line-height: inherit !important;
+}
+
+.chalkboard .unified-font-size i,
+.chalkboard .unified-font-size em {
+  font-style: italic !important;
+  font-size: inherit !important;
+  line-height: inherit !important;
+}
+
+.chalkboard .unified-font-size u {
+  text-decoration: underline !important;
+  font-size: inherit !important;
+  line-height: inherit !important;
+}
+
+.chalkboard .unified-font-size mark {
+  background-color: rgba(255, 255, 0, 0.3) !important;
+  color: inherit !important;
+  font-size: inherit !important;
+  line-height: inherit !important;
+}
+
+.chalkboard .unified-font-size del {
+  text-decoration: line-through !important;
+  font-size: inherit !important;
+  line-height: inherit !important;
+}
+
+.chalkboard .unified-font-size ins {
+  text-decoration: underline !important;
+  background-color: rgba(0, 255, 0, 0.1) !important;
+  font-size: inherit !important;
+  line-height: inherit !important;
+}
+
+.chalkboard .unified-font-size sub {
+  vertical-align: sub !important;
+  font-size: 0.75em !important;
+  line-height: inherit !important;
+}
+
+.chalkboard .unified-font-size sup {
+  vertical-align: super !important;
+  font-size: 0.75em !important;
+  line-height: inherit !important;
+}
+
+/* 폐기된 폰트 태그들 완전 무력화 - 강제 우선순위 */
+.chalkboard .unified-font-size font,
+.chalkboard .unified-font-size big,
+.chalkboard .unified-font-size small,
+.chalkboard font,
+.chalkboard big,
+.chalkboard small {
+  font-size: inherit !important;
+  font-family: inherit !important;
+  line-height: inherit !important;
+}
+
+/* 인라인 폰트 스타일 무력화 - 강제 우선순위 */
+.chalkboard .unified-font-size [style*="font-size"],
+.chalkboard .unified-font-size [style*="font"],
+.chalkboard .unified-font-size [style*="line-height"] {
+  font-size: inherit !important;
+  line-height: inherit !important;
+  font-family: inherit !important;
+}
+
+/* 문제 해결: execCommand 스팬 태그 정리 - 강제 우선순위 */
+.chalkboard .unified-font-size span[style]:not(.style-marker) {
+  /* execCommand로 생성된 불필요한 스팬 정리 */
+  display: inline !important;
+  background: inherit !important;
+  border: none !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  font-size: inherit !important;
+  line-height: inherit !important;
+  font-family: inherit !important;
+}
+
+/* 모든 요소에 대한 절대적 폰트 크기 무력화 */
+.chalkboard .unified-font-size,
+.chalkboard .unified-font-size * {
+  font-size: inherit !important;
+  line-height: inherit !important;
+}
+
+/* 메모장 스타일: 선택 영역 시각적 피드백 */
+.chalkboard .text-selection-active {
+  background-color: rgba(77, 148, 255, 0.3) !important;
+  color: inherit !important;
+}
+
+/* 메모장 방식 - 섞인 상태 표시를 위한 스타일 */
+.toolbar button.mixed {
+  background: linear-gradient(45deg, 
+    rgba(255, 255, 255, 0.1) 25%, 
+    rgba(255, 255, 255, 0.3) 25%, 
+    rgba(255, 255, 255, 0.3) 50%, 
+    rgba(255, 255, 255, 0.1) 50%, 
+    rgba(255, 255, 255, 0.1) 75%, 
+    rgba(255, 255, 255, 0.3) 75%
+  );
+  background-size: 8px 8px;
+  border: 2px dashed rgba(255, 255, 255, 0.5);
+  opacity: 0.7;
+  animation: mixedPulse 2s ease-in-out infinite;
+}
+
+@keyframes mixedPulse {
+  0%, 100% { opacity: 0.7; }
+  50% { opacity: 0.9; }
+}
+
+/* 메모장 방식 - 색상 선택기의 섞인 상태 */
+.toolbar input[type="color"] {
+  transition: all 0.3s ease;
+}
+
+/* 메모장 방식 - 글자 크기 선택기의 섞인 상태 */
+.toolbar select[style*="italic"] {
+  background-image: linear-gradient(45deg, transparent 40%, rgba(255,255,255,0.1) 50%, transparent 60%);
+}
+
+/* 적응형 줄 간격 클래스들 */
+.chalkboard [style*="font-size"] {
+  line-height: inherit;
+}
+
+/* 다양한 글자 크기에 대한 최적화된 줄 간격 */
+.chalkboard span[style*="font-size: 16px"],
+.chalkboard span[style*="font-size: 18px"] {
+  line-height: 1.6;
+}
+
+.chalkboard span[style*="font-size: 20px"],
+.chalkboard span[style*="font-size: 24px"] {
+  line-height: 1.5;
+}
+
+.chalkboard span[style*="font-size: 30px"],
+.chalkboard span[style*="font-size: 36px"] {
+  line-height: 1.4;
+}
+
+.chalkboard span[style*="font-size: 42px"],
+.chalkboard span[style*="font-size: 48px"] {
+  line-height: 1.35;
+}
+
+.chalkboard span[style*="font-size: 56px"],
+.chalkboard span[style*="font-size: 64px"],
+.chalkboard span[style*="font-size: 72px"] {
+  line-height: 1.3;
+}
+
+.chalkboard span[style*="font-size: 96px"] {
+  line-height: 1.25;
+}
+
+.chalkboard span[style*="font-size: 120px"],
+.chalkboard span[style*="font-size: 144px"] {
+  line-height: 1.2;
+}
+
+/* 텍스트 선택 최적화 */
+.chalkboard ::selection {
+  background: rgba(77, 148, 255, 0.3);
+  color: inherit;
+}
+
+.chalkboard ::-moz-selection {
+  background: rgba(77, 148, 255, 0.3);
+  color: inherit;
+}
+
+/* 빈 줄 처리 */
+.chalkboard br {
+  line-height: inherit;
+}
+
+.chalkboard p {
+  margin: 0.5em 0;
+  line-height: inherit;
+}
+
+.chalkboard div {
+  line-height: inherit;
+}
+
+/* 스크롤바 디자인 */
+.chalkboard::-webkit-scrollbar {
+  width: 10px;
+}
+
+.chalkboard::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.chalkboard::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 5px;
+}
+
+.chalkboard::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+/* 칠판 플레이스홀더 */
+.chalkboard:empty:before {
+  content: "여기에 내용을 입력하세요...";
+  color: rgba(255, 255, 255, 0.3);
+  position: absolute;
+  pointer-events: none;
+  font-size: 24px;
+  font-style: italic;
+}
+
+/* 탭 관련 스타일 */
+.tabs-container {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px;
+  -webkit-app-region: no-drag;
+}
+
+.tabs-wrapper {
+  display: flex;
+  gap: 4px;
+  flex: 1;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.tabs-wrapper::-webkit-scrollbar {
+  display: none;
+}
+
+.tab {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background-color: rgba(255, 255, 255, 0.05);
+  border-radius: 6px 6px 0 0;
+  cursor: pointer;
+  min-width: 120px;
+  max-width: 200px;
+  transition: all 0.2s ease;
+  position: relative;
+  user-select: none;
+}
+
+.tab:hover {
+  background-color: rgba(255, 255, 255, 0.1);
+}
+
+.tab.active {
+  background-color: var(--chalkboard);
+  border-bottom: 2px solid var(--accent);
+}
+
+.tab-title {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  color: var(--chalk-dim);
+}
+
+.tab.active .tab-title {
+  color: var(--chalk);
+}
+
+.tab-close {
+  background: none;
+  border: none;
+  color: var(--chalk-dim);
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 4px;
+  font-size: 18px;
+  line-height: 1;
+  opacity: 0;
+  transition: all 0.2s ease;
+}
+
+.tab:hover .tab-close {
+  opacity: 1;
+}
+
+.tab-close:hover {
+  background-color: rgba(255, 255, 255, 0.2);
+  color: var(--chalk);
+}
+
+.add-tab-btn {
+  background: none;
+  border: none;
+  color: var(--chalk-dim);
+  cursor: pointer;
+  padding: 6px 12px;
+  border-radius: 4px;
+  font-size: 20px;
+  transition: all 0.2s ease;
+}
+
+.add-tab-btn:hover {
+  background-color: rgba(255, 255, 255, 0.1);
+  color: var(--chalk);
+}
+
+/* 탭 콘텐츠 영역 */
+#tabContents {
+  height: calc(100vh - 3rem);
+  position: relative;
+}
+
+.tab-content {
+  display: none;
+  height: 100%;
+  flex-direction: column;
+}
+
+.tab-content.active {
+  display: flex;
+}
+
+/* 애니메이션 효과 */
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* 유틸리티 클래스 */
+.text-yellow-400 {
+  color: var(--yellow-400);
+}
+
+.text-base {
+  font-size: 1rem;
+}
+
+.text-xs {
+  font-size: 0.75rem;
+}
+
+/* 사이드바 스타일 */
+.sidebar {
+  position: fixed;
+  top: 40px; /* 타이틀바 높이 고려 */
+  right: -500px; /* 320px → 500px */
+  width: 500px; /* 320px → 500px */
+  height: calc(100vh - 40px); /* 타이틀바 높이 고려 */
+  background-color: #1a1a1a;
+  border-left: 1px solid #444;
+  transition: right 0.3s ease;
+  z-index: 1000;
+  overflow-y: auto;
+}
+
+.sidebar.open {
+  right: 0;
+}
+
+.sidebar-toggle {
+  position: fixed;
+  top: 50%;
+  right: 0;
+  transform: translateY(-50%);
+  width: 40px; /* 30px → 40px */
+  height: 80px; /* 60px → 80px */
+  background-color: #2a2a2a;
+  border: 1px solid #444;
+  border-right: none;
+  border-radius: 15px 0 0 15px; /* 10px → 15px */
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: right 0.3s ease;
+  z-index: 999;
+}
+
+.sidebar.open + .sidebar-toggle {
+  right: 500px; /* 320px → 500px */
+}
+
+.sidebar-toggle:hover {
+  background-color: #3a3a3a;
+}
+
+.sidebar-arrow {
+  width: 0;
+  height: 0;
+  border-style: solid;
+  border-width: 10px 12px 10px 0; /* 6px 8px → 10px 12px */
+  border-color: transparent #888 transparent transparent;
+  transition: transform 0.3s ease;
+}
+
+.sidebar.open + .sidebar-toggle .sidebar-arrow {
+  transform: rotate(180deg);
+}
+
+/* 시간표 스타일 */
+.timetable-container {
+  padding: 30px; /* 20px → 30px */
+}
+
+.timetable-header {
+  color: #fff;
+  font-size: 36px; /* 18px → 36px */
+  font-weight: bold;
+  margin-bottom: 40px; /* 20px → 40px */
+  padding-bottom: 20px; /* 10px → 20px */
+  border-bottom: 2px solid #444; /* 1px → 2px */
+}
+
+.timetable-item {
+  display: flex;
+  align-items: center;
+  padding: 24px;
+  margin-bottom: 16px;
+  background-color: #2a2a2a;
+  border-radius: 12px;
+  transition: background-color 0.2s ease;
+  min-height: 100px;
+  gap: 20px;
+}
+
+.timetable-item:hover {
+  background-color: #333;
+}
+
+.timetable-number {
+  color: #5a9fd4;
+  font-size: 60px;
+  font-weight: bold;
+  width: 80px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.timetable-subject {
+  flex: 1;
+  max-width: calc(100% - 180px);  /* 추가: 최대 너비 제한 (80px 번호 + 60px 체크박스 + 40px 여백) */
+  color: #fff;
+  /* font-size는 다른 !important 규칙으로 관리될 수 있음 */
+  background: transparent;
+  border: none;
+  outline: none;
+  cursor: text;
+  padding: 0.3em 20px; /* 수정: 상하 패딩을 em 단위로 변경, 기존 12px 20px */
+  border-radius: 8px;
+  transition: background-color 0.2s ease;
+  /* line-height는 다른 !important 규칙으로 관리될 수 있음 */
+  /* min-height: 70px; */ /* 제거: 고정 최소 높이 제거 */
+  font-family: inherit;
+  overflow: hidden;  /* 추가: 넘치는 텍스트 숨김 */
+  text-overflow: ellipsis;  /* 추가: 말줄임표 */
+}
+
+.timetable-subject:focus {
+  background-color: #3a3a3a;
+}
+
+.timetable-checkbox {
+  width: 40px;
+  height: 40px;
+  min-width: 40px;
+  accent-color: #5a9fd4;
+  cursor: pointer;
+  transform: scale(1.5);
+  flex-shrink: 0;
+}
+
+.timetable-actions {
+  margin-top: 40px;
+  display: flex;
+  gap: 20px;
+}
+
+.timetable-btn {
+  padding: 16px 32px;
+  background-color: #3a3a3a;
+  color: #fff;
+  border: 2px solid #555;
+  border-radius: 10px;
+  cursor: pointer;
+  font-size: 24px;
+  transition: all 0.2s ease;
+  font-weight: 500;
+}
+
+.timetable-btn:hover {
+  background-color: #4a4a4a;
+  border-color: #666;
+}
+
+/* 시간표 전용 폰트 크기 리셋 */
+.sidebar * {
+  /* 상속된 폰트 크기 리셋 */
+  font-size: inherit;
+}
+
+/* 각 요소별 명시적 크기 지정 */
+.timetable-header {
+  font-size: 36px !important;
+  line-height: 1.2;
+}
+
+.timetable-number {
+  font-size: 60px !important;
+  line-height: 1;
+}
+
+.timetable-subject {
+  font-size: 48px !important;
+  line-height: 1.2;
+}
+
+.timetable-btn {
+  font-size: 24px !important;
+  line-height: 1.5;
+}
+
+/* 체크박스는 transform으로 크기 조절 */
+.timetable-checkbox {
+  width: 40px !important;
+  height: 40px !important;
+  transform: scale(1.5) !important;
+}
+
+/* 탭 영역 조정 */
+.sidebar.open ~ #tabContents .tab-content {
+  margin-right: 500px;
+}
+
+/* 사이드바 스크롤바 스타일 */
+.sidebar::-webkit-scrollbar {
+  width: 12px;
+}
+
+.sidebar::-webkit-scrollbar-track {
+  background: #1a1a1a;
+}
+
+.sidebar::-webkit-scrollbar-thumb {
+  background: #444;
+  border-radius: 6px;
+}
+
+.sidebar::-webkit-scrollbar-thumb:hover {
+  background: #555;
+}
+
+@media (max-width: 1400px) {
+  .sidebar {
+    width: 400px;
+    right: -400px;
+  }
+  
+  .sidebar.open + .sidebar-toggle {
+    right: 400px;
+  }
+  
+  .sidebar.open ~ #tabContents .tab-content {
+    margin-right: 400px;
+  }
+  
+  .timetable-subject {
+    font-size: 36px;
+  }
+  
+  .timetable-number {
+    font-size: 48px;
+  }
+}
+
+/* 사이드바 애니메이션 */
+@keyframes slideIn {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+/* 붙여넣기 시각적 피드백 */
+input.paste-feedback,
+textarea.paste-feedback {
+  animation: pasteHighlight 0.3s ease;
+}
+
+@keyframes pasteHighlight {
+  0% { 
+    background-color: rgba(90, 159, 212, 0.3);
+    box-shadow: 0 0 0 2px rgba(90, 159, 212, 0.5);
+  }
+  100% { 
+    background-color: transparent;
+    box-shadow: none;
+  }
+}
+
+/* 드래그 오버 시각적 피드백 */
+.chalkboard.drag-over,
+.timetable-subject.drag-over {
+  background-color: rgba(90, 159, 212, 0.1);
+  border: 2px dashed #5a9fd4;
+}
+
+.tab-title.drag-over {
+  background-color: rgba(90, 159, 212, 0.2);
+  border-radius: 3px;
+}

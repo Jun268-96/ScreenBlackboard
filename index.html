@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>화면 칠판</title>
+  <!-- 기본 스타일 -->
+  <link href="./src/base.css" rel="stylesheet">
+</head>
+<body>
+  <!-- 창 제어 상단 바 (드래그 가능) -->
+  <div id="titleBar">
+    <div class="tabs-container">
+      <div class="tabs-wrapper">
+      </div>
+      <button id="addTabButton" class="add-tab-btn" title="새 칠판 추가">+</button>
+    </div>
+    <div class="window-controls">
+      <button id="minimizeButton" title="최소화">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
+          <path d="M14 8a1 1 0 0 1-1 1H3a1 1 0 0 1 0-2h10a1 1 0 0 1 1 1z"/>
+        </svg>
+      </button>
+      <button id="maximizeButton" title="최대화">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
+          <path d="M14 2a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1h12zM2 1a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V3a2 2 0 0 0-2-2H2z"/>
+          <path d="M13 4H3v8h10V4z"/>
+        </svg>
+      </button>
+      <button id="closeButton" title="닫기">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
+          <path d="M4.646 4.646a.5.5 0 0 1 .708 0L8 7.293l2.646-2.647a.5.5 0 0 1 .708.708L8.707 8l2.647 2.646a.5.5 0 0 1-.708.708L8 8.707l-2.646 2.647a.5.5 0 0 1-.708-.708L7.293 8 4.646 5.354a.5.5 0 0 1 0-.708z"/>
+        </svg>
+      </button>
+    </div>
+  </div>
+
+  <!-- 탭 콘텐츠 영역 -->
+  <div id="tabContents">
+  </div>
+
+  <!-- 사이드바 시간표 -->
+  <div id="sidebar" class="sidebar">
+    <div class="timetable-container">
+      <h2 class="timetable-header">오늘의 시간표</h2>
+      <div id="timetableList"></div>
+      <div class="timetable-actions">
+        <button class="timetable-btn" onclick="addTimetableItem()">추가</button>
+        <button class="timetable-btn" onclick="clearChecked()">체크된 과목 삭제</button>
+      </div>
+    </div>
+  </div>
+  <button id="sidebarToggle" class="sidebar-toggle" onclick="toggleSidebar()">
+    <span class="sidebar-arrow"></span>
+  </button>
+
+  <!-- 스크립트 로드 -->
+  <script src="./src/renderer.js"></script>
+</body>
+</html>
