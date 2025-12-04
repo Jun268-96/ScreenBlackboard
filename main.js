@@ -4,6 +4,8 @@ const fs = require('fs');
 
 // 환경설정 데이터 저장 경로
 const USER_DATA_PATH = path.join(app.getPath('userData'), 'chalkboard-data.json');
+const CHALKBOARD_DATA_PATH = path.join(app.getPath('userData'), 'chalkboard-content.json');
+const TIMETABLE_DATA_PATH = path.join(app.getPath('userData'), 'timetable-content.json');
 
 // 애플리케이션 아이콘 경로 (32x32 크기가 권장됨)
 const ICON_PATH = path.join(__dirname, 'icons', 'chalkboard-icon.png');
@@ -41,7 +43,13 @@ function createWindow() {
   loadWindowSettings();
   
   // 창 닫힐 때 설정 저장
-  mainWindow.on('close', saveWindowSettings);
+  mainWindow.on('close', (event) => {
+    // 칠판 데이터 저장 요청
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('save-before-quit');
+    }
+    saveWindowSettings();
+  });
   
   // 시스템 트레이 설정
   createTray();
@@ -63,6 +71,30 @@ app.on('ready', () => {
   app.on('activate', function () {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
+});
+
+// 앱 종료 전 데이터 저장
+app.on('before-quit', async (event) => {
+  console.log('🔄 앱 종료 전 데이터 저장 시작');
+
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    event.preventDefault();
+
+    try {
+      // 렌더러에 저장 요청
+      mainWindow.webContents.send('save-before-quit');
+
+      // 저장 완료까지 잠시 대기
+      await new Promise(resolve => setTimeout(resolve, 500));
+
+      console.log('✅ 앱 종료 전 데이터 저장 완료');
+    } catch (error) {
+      console.error('❌ 앱 종료 전 저장 오류:', error);
+    }
+
+    // 실제 종료
+    app.exit(0);
+  }
 });
 
 // 모든 창이 닫히면 앱 종료 (macOS 제외)
@@ -97,6 +129,11 @@ function loadWindowSettings() {
       
       if (data.bounds) {
         mainWindow.setBounds(data.bounds);
+      }
+      
+      // Always-on-top 상태 복원
+      if (typeof data.isAlwaysOnTop === 'boolean') {
+        mainWindow.setAlwaysOnTop(data.isAlwaysOnTop);
       }
     }
   } catch (error) {
@@ -167,8 +204,13 @@ function createTray() {
 
 // IPC 이벤트 처리
 ipcMain.on('set-always-on-top', (event, value) => {
-  // 이 기능은 제거되었습니다
-  console.log('Always on top feature has been removed');
+  if (mainWindow) {
+    mainWindow.setAlwaysOnTop(value);
+    console.log('Always on top set to:', value);
+    
+    // 즉시 설정 저장
+    saveWindowSettings();
+  }
 });
 
 // 기본 창 컨트롤 기능
@@ -190,4 +232,48 @@ ipcMain.on('maximize-window', () => {
 
 ipcMain.on('close-window', () => {
   app.quit();
+});
+
+// 데이터 저장 및 로드 IPC 핸들러
+ipcMain.handle('save-data', (event, key, data) => {
+  try {
+    let filePath;
+    if (key === 'chalkboard-data') {
+      filePath = CHALKBOARD_DATA_PATH;
+    } else if (key === 'timetable-data') {
+      filePath = TIMETABLE_DATA_PATH;
+    } else {
+      return false;
+    }
+    
+    fs.writeFileSync(filePath, data);
+    console.log(`✅ 데이터 저장 성공: ${key}`);
+    return true;
+  } catch (error) {
+    console.error(`❌ 데이터 저장 실패: ${key}`, error);
+    return false;
+  }
+});
+
+ipcMain.handle('load-data', (event, key) => {
+  try {
+    let filePath;
+    if (key === 'chalkboard-data') {
+      filePath = CHALKBOARD_DATA_PATH;
+    } else if (key === 'timetable-data') {
+      filePath = TIMETABLE_DATA_PATH;
+    } else {
+      return null;
+    }
+    
+    if (fs.existsSync(filePath)) {
+      const data = fs.readFileSync(filePath, 'utf-8');
+      console.log(`✅ 데이터 로드 성공: ${key}`);
+      return data;
+    }
+    return null;
+  } catch (error) {
+    console.error(`❌ 데이터 로드 실패: ${key}`, error);
+    return null;
+  }
 });

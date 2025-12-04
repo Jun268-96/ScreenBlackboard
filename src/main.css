@@ -1,0 +1,7 @@
+/* Main stylesheet - imports all components */
+@import './variables.css';
+@import './layout.css';
+@import './titlebar.css';
+@import './toolbar.css';
+@import './chalkboard.css';
+@import './sidebar.css';

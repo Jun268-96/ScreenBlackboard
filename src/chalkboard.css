@@ -1,0 +1,304 @@
+/* Chalkboard drawing area styles */
+
+.chalkboard {
+  /* Reset any inherited text formatting */
+  font-weight: normal;
+  font-style: normal;
+  text-decoration: none;
+  padding: 2rem;
+  height: calc(100vh - 7rem); /* titlebar + toolbar height */
+  overflow: auto;
+  outline: none;
+  user-select: text;
+  caret-color: var(--chalk);
+  font-size: 72px; /* default font size */
+  line-height: 1.3; /* default line height - dynamically adjusted */
+  background-image: radial-gradient(circle at center, #2c2c2c 0%, #1e1e1e 100%);
+  box-shadow: inset 0 0 50px rgba(0, 0, 0, 0.5);
+  transition: background-color 0.3s ease;
+  
+  /* text rendering optimization for Korean */
+  font-feature-settings: "liga", "kern";
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  
+  /* Korean text optimization */
+  word-break: keep-all;
+  overflow-wrap: break-word;
+  
+  /* text spacing optimization */
+  word-spacing: 0.1em;
+  letter-spacing: 0.02em;
+}
+
+.chalkboard:focus {
+  outline: none;
+}
+
+/* Placeholder */
+.chalkboard:empty:before {
+  content: "여기에 내용을 입력하세요...";
+  color: rgba(255, 255, 255, 0.3);
+  position: absolute;
+  pointer-events: none;
+  font-size: 24px;
+  font-style: italic;
+}
+
+/* Text Selection */
+.chalkboard ::selection {
+  background: rgba(77, 148, 255, 0.3);
+  color: inherit;
+}
+
+.chalkboard ::-moz-selection {
+  background: rgba(77, 148, 255, 0.3);
+  color: inherit;
+}
+
+.chalkboard .text-selection-active {
+  background-color: rgba(77, 148, 255, 0.3) !important;
+  color: inherit !important;
+}
+
+/* Scrollbar */
+.chalkboard::-webkit-scrollbar {
+  width: 10px;
+}
+
+.chalkboard::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.chalkboard::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 5px;
+}
+
+.chalkboard::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+/* Style System */
+.chalkboard .style-marker {
+  display: inline;
+  position: relative;
+}
+
+.chalkboard .style-marker:empty {
+  display: inline-block;
+  width: 0;
+  height: 1em;
+}
+
+/* Unified Font Size System - highest priority */
+.chalkboard .unified-font-size {
+  text-rendering: optimizeLegibility !important;
+  -webkit-font-smoothing: antialiased !important;
+  -moz-osx-font-smoothing: grayscale !important;
+  font-feature-settings: "kern" 1 !important;
+  
+  font-size: inherit !important;
+  line-height: inherit !important;
+  font-family: inherit !important;
+  
+  transition: all 0.2s ease;
+}
+
+/* Unified font size internal elements */
+.chalkboard .unified-font-size *,
+.chalkboard .unified-font-size *:before,
+.chalkboard .unified-font-size *:after {
+  font-size: inherit !important;
+  line-height: inherit !important;
+  font-family: inherit !important;
+  
+  font-weight: inherit !important;
+  font-style: inherit !important;
+  text-decoration: inherit !important;
+}
+
+/* Text formatting overrides */
+.chalkboard .unified-font-size b,
+.chalkboard .unified-font-size strong {
+  font-weight: bold !important;
+  font-size: inherit !important;
+  line-height: inherit !important;
+}
+
+.chalkboard .unified-font-size i,
+.chalkboard .unified-font-size em {
+  font-style: italic !important;
+  font-size: inherit !important;
+  line-height: inherit !important;
+}
+
+.chalkboard .unified-font-size u {
+  text-decoration: underline !important;
+  font-size: inherit !important;
+  line-height: inherit !important;
+}
+
+.chalkboard .unified-font-size mark {
+  background-color: rgba(255, 255, 0, 0.3) !important;
+  color: inherit !important;
+  font-size: inherit !important;
+  line-height: inherit !important;
+}
+
+.chalkboard .unified-font-size del {
+  text-decoration: line-through !important;
+  font-size: inherit !important;
+  line-height: inherit !important;
+}
+
+.chalkboard .unified-font-size ins {
+  text-decoration: underline !important;
+  background-color: rgba(0, 255, 0, 0.1) !important;
+  font-size: inherit !important;
+  line-height: inherit !important;
+}
+
+.chalkboard .unified-font-size sub {
+  vertical-align: sub !important;
+  font-size: 0.75em !important;
+  line-height: inherit !important;
+}
+
+.chalkboard .unified-font-size sup {
+  vertical-align: super !important;
+  font-size: 0.75em !important;
+  line-height: inherit !important;
+}
+
+/* Deprecated font tags neutralization */
+.chalkboard .unified-font-size font,
+.chalkboard .unified-font-size big,
+.chalkboard .unified-font-size small,
+.chalkboard font,
+.chalkboard big,
+.chalkboard small {
+  font-size: inherit !important;
+  font-family: inherit !important;
+  line-height: inherit !important;
+}
+
+/* Inline font style neutralization */
+.chalkboard .unified-font-size [style*="font-size"],
+.chalkboard .unified-font-size [style*="font"],
+.chalkboard .unified-font-size [style*="line-height"] {
+  font-size: inherit !important;
+  line-height: inherit !important;
+  font-family: inherit !important;
+}
+
+/* execCommand span cleanup */
+.chalkboard .unified-font-size span[style]:not(.style-marker) {
+  display: inline !important;
+  background: inherit !important;
+  border: none !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  font-size: inherit !important;
+  line-height: inherit !important;
+  font-family: inherit !important;
+}
+
+/* Absolute font size neutralization */
+.chalkboard .unified-font-size,
+.chalkboard .unified-font-size * {
+  font-size: inherit !important;
+  line-height: inherit !important;
+}
+
+/* Adaptive line height for different font sizes */
+.chalkboard [style*="font-size"] {
+  line-height: inherit;
+}
+
+.chalkboard span[style*="font-size: 16px"],
+.chalkboard span[style*="font-size: 18px"] {
+  line-height: 1.6;
+}
+
+.chalkboard span[style*="font-size: 20px"],
+.chalkboard span[style*="font-size: 24px"] {
+  line-height: 1.5;
+}
+
+.chalkboard span[style*="font-size: 30px"],
+.chalkboard span[style*="font-size: 36px"] {
+  line-height: 1.4;
+}
+
+.chalkboard span[style*="font-size: 42px"],
+.chalkboard span[style*="font-size: 48px"] {
+  line-height: 1.35;
+}
+
+.chalkboard span[style*="font-size: 56px"],
+.chalkboard span[style*="font-size: 64px"],
+.chalkboard span[style*="font-size: 72px"] {
+  line-height: 1.3;
+}
+
+.chalkboard span[style*="font-size: 96px"] {
+  line-height: 1.25;
+}
+
+.chalkboard span[style*="font-size: 120px"],
+.chalkboard span[style*="font-size: 144px"] {
+  line-height: 1.2;
+}
+
+/* Layout elements */
+.chalkboard br {
+  line-height: inherit;
+}
+
+.chalkboard p {
+  margin: 0.5em 0;
+  line-height: inherit;
+}
+
+.chalkboard div {
+  line-height: inherit;
+}
+
+/* Feedback effects */
+input.paste-feedback,
+textarea.paste-feedback {
+  animation: pasteHighlight 0.3s ease;
+}
+
+.chalkboard.drag-over {
+  background-color: rgba(90, 159, 212, 0.1);
+  border: 2px dashed #5a9fd4;
+}
+
+/* Formatted text spans - ensure proper rendering */
+.chalkboard span {
+  display: inline;
+  line-height: inherit;
+}
+
+/* Bold text */
+.chalkboard span[style*="font-weight: bold"] {
+  font-weight: bold !important;
+}
+
+/* Italic text */
+.chalkboard span[style*="font-style: italic"] {
+  font-style: italic !important;
+}
+
+/* Underlined text */
+.chalkboard span[style*="text-decoration: underline"] {
+  text-decoration: underline !important;
+}
+
+/* Ensure color inheritance works properly */
+.chalkboard span[style*="color"] {
+  color: inherit;
+}

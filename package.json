@@ -8,21 +8,20 @@
     "dev": "electron . --dev",
     "package": "npx @electron/packager . 여기보세요 --platform=win32 --arch=x64 --out=dist --icon=icons/chalkboard-icon.png --overwrite --asar --prune=true --executable-name=여기보세요",
     "build": "electron-builder --win --x64",
+    "clean": "rm -rf dist/deploy dist/win-unpacked dist/.icon-ico dist/builder-debug.yml dist/*.blockmap",
     "postinstall": "electron-builder install-app-deps"
   },
   "build": {
     "appId": "com.example.chalkboard",
     "productName": "여기보세요",
     "directories": {
-      "output": "dist"
+      "output": "dist",
+      "buildResources": "icons"
     },
     "asar": true,
     "artifactName": "여기보세요-${version}.${ext}",
     "win": {
-      "target": [
-        "nsis",
-        "portable"
-      ],
+      "target": "portable",
       "icon": "icons/chalkboard-icon.png"
     },
     "nsis": {

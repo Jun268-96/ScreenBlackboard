@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>한글 입력 테스트</title>
+  <style>
+    body { font-family: 'Malgun Gothic', sans-serif; margin: 20px; background: #262626; color: #fff; }
+    .test-area { 
+      border: 2px solid #444; 
+      padding: 20px; 
+      min-height: 200px; 
+      background: #1a1a1a;
+      font-size: 48px;
+      margin: 10px 0;
+    }
+    .info { 
+      background: #333; 
+      padding: 15px; 
+      margin: 10px 0; 
+      border-radius: 5px;
+      font-size: 14px;
+    }
+    .controls { 
+      margin: 20px 0; 
+      display: flex; 
+      gap: 10px; 
+      align-items: center;
+    }
+    button { 
+      padding: 8px 16px; 
+      background: #4d94ff; 
+      color: white; 
+      border: none; 
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    button:hover { background: #3d84ef; }
+    button.active { background: #ff6b35; }
+  </style>
+</head>
+<body>
+  <h1>🇰🇷 한글 입력 테스트</h1>
+  
+  <div class="controls">
+    <button id="boldBtn">굵게</button>
+    <button id="italicBtn">기울임</button>
+    <input type="color" id="colorPicker" value="#ffffff" title="색상">
+    <input type="number" id="fontSizeInput" value="48" min="8" max="200" title="크기">
+  </div>
+  
+  <div class="info">
+    <strong>테스트 방법:</strong> 아래 영역에 한글을 입력하면서 서식을 적용해보세요.
+    <br><strong>테스트 텍스트:</strong> "안녕하세요", "한글 테스트", "자음+모음 조합"
+  </div>
+  
+  <h3>📝 현재 텍스트 포매터 (문제 가능성)</h3>
+  <div class="test-area" contenteditable="true" id="currentFormatter">
+    한글을 입력해보세요
+  </div>
+  
+  <h3>✅ 개선된 텍스트 포매터</h3>
+  <div class="test-area" contenteditable="true" id="improvedFormatter">
+    한글을 입력해보세요
+  </div>
+  
+  <div class="info" id="eventLog">
+    <strong>이벤트 로그:</strong><br>
+    <div id="logContent"></div>
+  </div>
+
+  <script src="./src/text-formatter.js"></script>
+  <script>
+    const textFormatter = new SimpleTextFormatter();
+    const currentArea = document.getElementById('currentFormatter');
+    const improvedArea = document.getElementById('improvedFormatter');
+    const boldBtn = document.getElementById('boldBtn');
+    const italicBtn = document.getElementById('italicBtn');
+    const colorPicker = document.getElementById('colorPicker');
+    const fontSizeInput = document.getElementById('fontSizeInput');
+    const logContent = document.getElementById('logContent');
+    
+    let eventCount = 0;
+    
+    function log(message) {
+      eventCount++;
+      logContent.innerHTML = `[${eventCount}] ${message}<br>` + logContent.innerHTML;
+      if (eventCount > 20) {
+        const lines = logContent.innerHTML.split('<br>');
+        logContent.innerHTML = lines.slice(0, 20).join('<br>');
+      }
+    }
+    
+    // Current formatter setup (potentially problematic)
+    currentArea.addEventListener('input', (e) => {
+      log(`현재: input event - type: ${e.inputType}, data: "${e.data}"`);
+      textFormatter.handleInput(e);
+    });
+    
+    currentArea.addEventListener('compositionstart', (e) => {
+      log(`현재: compositionstart - data: "${e.data}"`);
+    });
+    
+    currentArea.addEventListener('compositionupdate', (e) => {
+      log(`현재: compositionupdate - data: "${e.data}"`);
+    });
+    
+    currentArea.addEventListener('compositionend', (e) => {
+      log(`현재: compositionend - data: "${e.data}"`);
+    });
+    
+    // Improved formatter setup
+    let isComposing = false;
+    let compositionText = '';
+    
+    improvedArea.addEventListener('compositionstart', (e) => {
+      isComposing = true;
+      compositionText = '';
+      log(`개선: compositionstart - 한글 입력 시작`);
+    });
+    
+    improvedArea.addEventListener('compositionupdate', (e) => {
+      compositionText = e.data;
+      log(`개선: compositionupdate - 조합중: "${e.data}"`);
+    });
+    
+    improvedArea.addEventListener('compositionend', (e) => {
+      isComposing = false;
+      log(`개선: compositionend - 완성: "${e.data}"`);
+      
+      // Apply formatting after composition is complete
+      setTimeout(() => {
+        const formatData = improvedArea.dataset.currentFormat;
+        if (formatData) {
+          try {
+            const format = JSON.parse(formatData);
+            applyImprovedFormatting(improvedArea, format);
+          } catch (error) {
+            console.error('Format error:', error);
+          }
+        }
+      }, 10);
+    });
+    
+    improvedArea.addEventListener('input', (e) => {
+      log(`개선: input event - type: ${e.inputType}, composing: ${isComposing}`);
+      
+      // Only apply formatting if not composing Korean
+      if (!isComposing && e.inputType !== 'deleteContentBackward') {
+        const formatData = improvedArea.dataset.currentFormat;
+        if (formatData) {
+          try {
+            const format = JSON.parse(formatData);
+            setTimeout(() => applyImprovedFormatting(improvedArea, format), 10);
+          } catch (error) {
+            console.error('Format error:', error);
+          }
+        }
+      }
+    });
+    
+    function applyImprovedFormatting(area, format) {
+      const selection = window.getSelection();
+      if (selection.rangeCount === 0) return;
+
+      const range = selection.getRangeAt(0);
+      const textNode = range.startContainer;
+      
+      if (textNode.nodeType === Node.TEXT_NODE && textNode.textContent.length > 0) {
+        if (!textNode.parentElement || textNode.parentElement === area) {
+          const text = textNode.textContent;
+          
+          const span = document.createElement('span');
+          textFormatter.applyStylesToElement(span, format);
+          span.textContent = text;
+          
+          textNode.parentNode.replaceChild(span, textNode);
+          
+          // Restore cursor position
+          range.setStart(span.firstChild, text.length);
+          range.setEnd(span.firstChild, text.length);
+          selection.removeAllRanges();
+          selection.addRange(range);
+          
+          log(`개선: 서식 적용됨 - "${text}"`);
+        }
+      }
+    }
+    
+    // Control buttons
+    boldBtn.addEventListener('click', () => {
+      textFormatter.toggleFormat(currentArea, 'fontWeight');
+      toggleImprovedFormat(improvedArea, 'fontWeight');
+      updateButtonStates();
+    });
+    
+    italicBtn.addEventListener('click', () => {
+      textFormatter.toggleFormat(currentArea, 'fontStyle');
+      toggleImprovedFormat(improvedArea, 'fontStyle');
+      updateButtonStates();
+    });
+    
+    colorPicker.addEventListener('input', (e) => {
+      textFormatter.setColor(currentArea, e.target.value);
+      setImprovedColor(improvedArea, e.target.value);
+      updateButtonStates();
+    });
+    
+    fontSizeInput.addEventListener('input', (e) => {
+      const size = parseInt(e.target.value);
+      if (size >= 8 && size <= 200) {
+        textFormatter.setFontSize(currentArea, size);
+        setImprovedFontSize(improvedArea, size);
+        updateButtonStates();
+      }
+    });
+    
+    function toggleImprovedFormat(area, property) {
+      const currentFormat = textFormatter.getCurrentFormat(area);
+      let newValue;
+      
+      switch (property) {
+        case 'fontWeight':
+          newValue = currentFormat.fontWeight === 'bold' ? 'normal' : 'bold';
+          break;
+        case 'fontStyle':
+          newValue = currentFormat.fontStyle === 'italic' ? 'normal' : 'italic';
+          break;
+      }
+      
+      const formatData = { ...textFormatter.currentFormat };
+      formatData[property] = newValue;
+      area.dataset.currentFormat = JSON.stringify(formatData);
+      
+      if (area.style) {
+        area.style[property] = newValue;
+      }
+    }
+    
+    function setImprovedColor(area, color) {
+      const formatData = { ...textFormatter.currentFormat };
+      formatData.color = color;
+      area.dataset.currentFormat = JSON.stringify(formatData);
+      area.style.color = color;
+    }
+    
+    function setImprovedFontSize(area, fontSize) {
+      const formatData = { ...textFormatter.currentFormat };
+      formatData.fontSize = fontSize;
+      area.dataset.currentFormat = JSON.stringify(formatData);
+      area.style.fontSize = `${fontSize}px`;
+    }
+    
+    function updateButtonStates() {
+      const format = textFormatter.getCurrentFormat(currentArea);
+      boldBtn.classList.toggle('active', format.fontWeight === 'bold');
+      italicBtn.classList.toggle('active', format.fontStyle === 'italic');
+    }
+    
+    // Initialize
+    currentArea.dataset.currentFormat = JSON.stringify(textFormatter.currentFormat);
+    improvedArea.dataset.currentFormat = JSON.stringify(textFormatter.currentFormat);
+    updateButtonStates();
+    
+    log('테스트 시작: 한글을 입력해보세요');
+  </script>
+</body>
+</html>

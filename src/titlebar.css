@@ -1,0 +1,189 @@
+﻿/* Titlebar and tabs styles */
+
+/* Titlebar */
+#titleBar {
+  background-color: var(--chalkboard-dark);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0 1rem;
+  height: 3rem;
+  user-select: none;
+  -webkit-app-region: drag;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.window-title {
+  font-size: 1.1rem;
+  letter-spacing: 0.5px;
+}
+
+#titleBar button {
+  -webkit-app-region: no-drag;
+  background: none;
+  border: none;
+  color: var(--chalk-dim);
+  cursor: pointer;
+  padding: 0.35rem;
+  border-radius: 4px;
+  transition: all 0.2s ease;
+}
+
+#titleBar button:hover {
+  color: var(--chalk);
+  background-color: rgba(255, 255, 255, 0.1);
+}
+
+#titleBar button#closeButton:hover {
+  color: var(--chalk);
+  background-color: var(--red-500);
+}
+
+#titleBar button.active {
+  color: var(--yellow-400);
+}
+
+#titleBar button#alwaysOnTopButton.active {
+  color: var(--yellow-400);
+  background-color: rgba(255, 255, 0, 0.2);
+}
+
+.window-controls {
+  display: flex;
+  gap: 0.5rem;
+}
+
+/* Tab System */
+.tabs-container {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px;
+  -webkit-app-region: no-drag;
+}
+
+.tabs-wrapper {
+  display: flex;
+  gap: 4px;
+  flex: 1;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.tabs-wrapper::-webkit-scrollbar {
+  display: none;
+}
+
+.tab {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background-color: rgba(255, 255, 255, 0.05);
+  border-radius: 6px 6px 0 0;
+  cursor: pointer;
+  min-width: 120px;
+  max-width: 200px;
+  transition: all 0.2s ease;
+  position: relative;
+  user-select: none;
+}
+
+.tab:hover {
+  background-color: rgba(255, 255, 255, 0.1);
+}
+
+.tab.active {
+  background-color: var(--chalkboard);
+  border-bottom: 2px solid var(--accent);
+}
+
+.tab-title {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  color: var(--chalk-dim);
+}
+
+.tab.active .tab-title {
+  color: var(--chalk);
+}
+
+.tab-close {
+  background: none;
+  border: none;
+  color: var(--chalk-dim);
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 4px;
+  font-size: 18px;
+  line-height: 1;
+  opacity: 0;
+  transition: all 0.2s ease;
+}
+
+.tab:hover .tab-close {
+  opacity: 1;
+}
+
+.tab-close:hover {
+  background-color: rgba(255, 255, 255, 0.2);
+  color: var(--chalk);
+}
+
+.add-tab-btn {
+  background: none;
+  border: none;
+  color: var(--chalk-dim);
+  cursor: pointer;
+  padding: 6px 12px;
+  border-radius: 4px;
+  font-size: 20px;
+  transition: all 0.2s ease;
+}
+
+.add-tab-btn:hover {
+  background-color: rgba(255, 255, 255, 0.1);
+  color: var(--chalk);
+}
+.save-btn {
+  background-color: rgba(77, 148, 255, 0.15);
+  border: 1px solid rgba(77, 148, 255, 0.3);
+  color: var(--chalk);
+  font-weight: 600;
+  padding: 6px 14px;
+  border-radius: 6px;
+  transition: all 0.2s ease;
+}
+
+.save-btn:hover {
+  background-color: rgba(77, 148, 255, 0.3);
+  border-color: rgba(77, 148, 255, 0.5);
+  color: var(--chalk);
+}
+
+.save-btn:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+
+.save-btn[data-state="saving"] {
+  cursor: progress;
+  opacity: 0.7;
+}
+
+.save-btn[data-state="success"] {
+  background-color: rgba(52, 211, 153, 0.25);
+  border-color: rgba(52, 211, 153, 0.45);
+  color: var(--chalk);
+}
+
+.save-btn[data-state="error"] {
+  background-color: rgba(239, 68, 68, 0.25);
+  border-color: rgba(239, 68, 68, 0.45);
+  color: var(--chalk);
+}
+

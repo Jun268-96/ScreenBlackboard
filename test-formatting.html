@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Text Formatting Test</title>
+  <style>
+    body { font-family: 'Malgun Gothic', sans-serif; margin: 20px; background: #262626; color: #fff; }
+    .test-area { 
+      border: 2px solid #444; 
+      padding: 20px; 
+      min-height: 200px; 
+      background: #1a1a1a;
+      font-size: 72px;
+    }
+    .controls { 
+      margin: 20px 0; 
+      display: flex; 
+      gap: 10px; 
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    button { 
+      padding: 10px 20px; 
+      background: #4d94ff; 
+      color: white; 
+      border: none; 
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    button:hover { background: #3d84ef; }
+    button.active { background: #ff6b35; }
+    input[type="color"] { width: 50px; height: 40px; }
+    input[type="number"] { width: 80px; height: 40px; padding: 5px; }
+  </style>
+</head>
+<body>
+  <h1>🎨 Text Formatting Test</h1>
+  
+  <div class="controls">
+    <button id="boldBtn">굵게</button>
+    <button id="italicBtn">기울임</button>
+    <button id="underlineBtn">밑줄</button>
+    <input type="color" id="colorPicker" value="#ffffff" title="색상">
+    <input type="number" id="fontSizeInput" value="72" min="8" max="200" title="크기">
+    <button onclick="testFormatting()">테스트 실행</button>
+  </div>
+  
+  <div class="test-area" contenteditable="true" id="testArea">
+    테스트 텍스트를 입력하고 위 버튼들로 서식을 적용해보세요.
+  </div>
+  
+  <div id="results"></div>
+
+  <script src="./src/text-formatter.js"></script>
+  <script>
+    const textFormatter = new SimpleTextFormatter();
+    const testArea = document.getElementById('testArea');
+    const boldBtn = document.getElementById('boldBtn');
+    const italicBtn = document.getElementById('italicBtn');
+    const underlineBtn = document.getElementById('underlineBtn');
+    const colorPicker = document.getElementById('colorPicker');
+    const fontSizeInput = document.getElementById('fontSizeInput');
+    const results = document.getElementById('results');
+    
+    // Event listeners
+    boldBtn.addEventListener('click', () => {
+      textFormatter.toggleFormat(testArea, 'fontWeight');
+      updateButtonStates();
+    });
+    
+    italicBtn.addEventListener('click', () => {
+      textFormatter.toggleFormat(testArea, 'fontStyle');
+      updateButtonStates();
+    });
+    
+    underlineBtn.addEventListener('click', () => {
+      textFormatter.toggleFormat(testArea, 'textDecoration');
+      updateButtonStates();
+    });
+    
+    colorPicker.addEventListener('input', (e) => {
+      textFormatter.setColor(testArea, e.target.value);
+      updateButtonStates();
+    });
+    
+    fontSizeInput.addEventListener('input', (e) => {
+      const size = parseInt(e.target.value);
+      if (size >= 8 && size <= 200) {
+        textFormatter.setFontSize(testArea, size);
+        updateButtonStates();
+      }
+    });
+    
+    testArea.addEventListener('input', (e) => {
+      textFormatter.handleInput(e);
+    });
+    
+    testArea.addEventListener('keyup', updateButtonStates);
+    testArea.addEventListener('mouseup', updateButtonStates);
+    
+    function updateButtonStates() {
+      const format = textFormatter.getCurrentFormat(testArea);
+      
+      boldBtn.classList.toggle('active', format.fontWeight === 'bold');
+      italicBtn.classList.toggle('active', format.fontStyle === 'italic');
+      underlineBtn.classList.toggle('active', format.textDecoration === 'underline');
+      colorPicker.value = format.color;
+      fontSizeInput.value = format.fontSize;
+    }
+    
+    function testFormatting() {
+      const tests = [
+        { name: '굵게 토글', test: () => textFormatter.toggleFormat(testArea, 'fontWeight') },
+        { name: '기울임 토글', test: () => textFormatter.toggleFormat(testArea, 'fontStyle') },
+        { name: '밑줄 토글', test: () => textFormatter.toggleFormat(testArea, 'textDecoration') },
+        { name: '색상 변경', test: () => textFormatter.setColor(testArea, '#ff0000') },
+        { name: '크기 변경', test: () => textFormatter.setFontSize(testArea, 48) },
+      ];
+      
+      let output = '<h3>테스트 결과:</h3><ul>';
+      
+      tests.forEach(({ name, test }) => {
+        try {
+          test();
+          output += `<li>✅ ${name}: 성공</li>`;
+        } catch (error) {
+          output += `<li>❌ ${name}: 실패 - ${error.message}</li>`;
+        }
+      });
+      
+      output += '</ul>';
+      results.innerHTML = output;
+      updateButtonStates();
+    }
+    
+    // Initialize
+    updateButtonStates();
+  </script>
+</body>
+</html>

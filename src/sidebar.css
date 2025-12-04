@@ -1,0 +1,212 @@
+/* Sidebar and timetable styles */
+
+.sidebar {
+  position: fixed;
+  top: 40px; /* titlebar height */
+  right: -500px;
+  width: 500px;
+  height: calc(100vh - 40px);
+  background-color: #1a1a1a;
+  border-left: 1px solid #444;
+  transition: right 0.3s ease;
+  z-index: 1000;
+  overflow-y: auto;
+}
+
+.sidebar.open {
+  right: 0;
+}
+
+.sidebar-toggle {
+  position: fixed;
+  top: 50%;
+  right: 0;
+  transform: translateY(-50%);
+  width: 40px;
+  height: 80px;
+  background-color: #2a2a2a;
+  border: 1px solid #444;
+  border-right: none;
+  border-radius: 15px 0 0 15px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: right 0.3s ease;
+  z-index: 999;
+}
+
+.sidebar.open + .sidebar-toggle {
+  right: 500px;
+}
+
+.sidebar-toggle:hover {
+  background-color: #3a3a3a;
+}
+
+.sidebar-arrow {
+  width: 0;
+  height: 0;
+  border-style: solid;
+  border-width: 10px 12px 10px 0;
+  border-color: transparent #888 transparent transparent;
+  transition: transform 0.3s ease;
+}
+
+.sidebar.open + .sidebar-toggle .sidebar-arrow {
+  transform: rotate(180deg);
+}
+
+/* Timetable */
+.timetable-container {
+  padding: 30px;
+}
+
+.timetable-header {
+  color: #fff;
+  font-size: 36px !important;
+  font-weight: bold;
+  margin-bottom: 40px;
+  padding-bottom: 20px;
+  border-bottom: 2px solid #444;
+  line-height: 1.2;
+}
+
+.timetable-item {
+  display: flex;
+  align-items: center;
+  padding: 24px;
+  margin-bottom: 16px;
+  background-color: #2a2a2a;
+  border-radius: 12px;
+  transition: background-color 0.2s ease;
+  min-height: 100px;
+  gap: 20px;
+}
+
+.timetable-item:hover {
+  background-color: #333;
+}
+
+.timetable-number {
+  color: #5a9fd4;
+  font-size: 60px !important;
+  font-weight: bold;
+  width: 80px;
+  text-align: center;
+  flex-shrink: 0;
+  line-height: 1;
+}
+
+.timetable-subject {
+  flex: 1;
+  max-width: calc(100% - 180px);
+  color: #fff;
+  font-size: 48px !important;
+  background: transparent;
+  border: none;
+  outline: none;
+  cursor: text;
+  padding: 0.3em 20px;
+  border-radius: 8px;
+  transition: background-color 0.2s ease;
+  line-height: 1.2;
+  font-family: inherit;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.timetable-subject:focus {
+  background-color: #3a3a3a;
+}
+
+.timetable-subject.drag-over {
+  background-color: rgba(90, 159, 212, 0.2);
+  border-radius: 3px;
+}
+
+.timetable-checkbox {
+  width: 40px !important;
+  height: 40px !important;
+  min-width: 40px;
+  accent-color: #5a9fd4;
+  cursor: pointer;
+  transform: scale(1.5) !important;
+  flex-shrink: 0;
+}
+
+.timetable-actions {
+  margin-top: 40px;
+  display: flex;
+  gap: 20px;
+}
+
+.timetable-btn {
+  padding: 16px 32px;
+  background-color: #3a3a3a;
+  color: #fff;
+  border: 2px solid #555;
+  border-radius: 10px;
+  cursor: pointer;
+  font-size: 24px !important;
+  transition: all 0.2s ease;
+  font-weight: 500;
+  line-height: 1.5;
+}
+
+.timetable-btn:hover {
+  background-color: #4a4a4a;
+  border-color: #666;
+}
+
+/* Font size reset for sidebar */
+.sidebar * {
+  font-size: inherit;
+}
+
+/* Tab area adjustment when sidebar is open */
+.sidebar.open ~ #tabContents .tab-content {
+  margin-right: 500px;
+}
+
+/* Scrollbar */
+.sidebar::-webkit-scrollbar {
+  width: 12px;
+}
+
+.sidebar::-webkit-scrollbar-track {
+  background: #1a1a1a;
+}
+
+.sidebar::-webkit-scrollbar-thumb {
+  background: #444;
+  border-radius: 6px;
+}
+
+.sidebar::-webkit-scrollbar-thumb:hover {
+  background: #555;
+}
+
+/* Responsive design */
+@media (max-width: 1400px) {
+  .sidebar {
+    width: 400px;
+    right: -400px;
+  }
+  
+  .sidebar.open + .sidebar-toggle {
+    right: 400px;
+  }
+  
+  .sidebar.open ~ #tabContents .tab-content {
+    margin-right: 400px;
+  }
+  
+  .timetable-subject {
+    font-size: 36px !important;
+  }
+  
+  .timetable-number {
+    font-size: 48px !important;
+  }
+}

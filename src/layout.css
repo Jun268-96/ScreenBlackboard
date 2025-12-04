@@ -1,0 +1,77 @@
+/* Layout styles - Basic structure and resets */
+
+/* Basic Reset */
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+body, html {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  font-family: 'Malgun Gothic', sans-serif;
+  background-color: var(--chalkboard);
+  color: var(--chalk);
+}
+
+/* Tab Contents */
+#tabContents {
+  height: calc(100vh - 3rem);
+  position: relative;
+}
+
+.tab-content {
+  display: none;
+  height: 100%;
+  flex-direction: column;
+}
+
+.tab-content.active {
+  display: flex;
+}
+
+/* Utility Classes */
+.text-yellow-400 {
+  color: var(--yellow-400);
+}
+
+.text-base {
+  font-size: 1rem;
+}
+
+.text-xs {
+  font-size: 0.75rem;
+}
+
+/* Animations */
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes mixedPulse {
+  0%, 100% { opacity: 0.7; }
+  50% { opacity: 0.9; }
+}
+
+@keyframes pasteHighlight {
+  0% { 
+    background-color: rgba(90, 159, 212, 0.3);
+    box-shadow: 0 0 0 2px rgba(90, 159, 212, 0.5);
+  }
+  100% { 
+    background-color: transparent;
+    box-shadow: none;
+  }
+}
+
+@keyframes slideIn {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
