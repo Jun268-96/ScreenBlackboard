@@ -1,14 +1,14 @@
-const { app, BrowserWindow, ipcMain, screen, Tray, Menu, nativeImage } = require('electron');
+﻿const { app, BrowserWindow, ipcMain, screen, Tray, Menu, nativeImage } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
-// 환경설정 데이터 저장 경로
+// ?섍꼍?ㅼ젙 ?곗씠?????寃쎈줈
 const USER_DATA_PATH = path.join(app.getPath('userData'), 'chalkboard-data.json');
 const CHALKBOARD_DATA_PATH = path.join(app.getPath('userData'), 'chalkboard-content.json');
 const TIMETABLE_DATA_PATH = path.join(app.getPath('userData'), 'timetable-content.json');
 
-// 애플리케이션 아이콘 경로 (32x32 크기가 권장됨)
-const ICON_PATH = path.join(__dirname, 'icons', 'chalkboard-icon.png');
+// ?좏뵆由ъ??댁뀡 ?꾩씠肄?寃쎈줈 (32x32 ?ш린媛 沅뚯옣??
+const ICON_PATH = path.join(__dirname, 'icons', 'favicon.ico');
 
 let mainWindow;
 let tray = null;
@@ -16,14 +16,14 @@ let tray = null;
 function createWindow() {
   const { width, height } = screen.getPrimaryDisplay().workAreaSize;
   
-  // 메인 윈도우 생성
+  // 硫붿씤 ?덈룄???앹꽦
   mainWindow = new BrowserWindow({
     width: Math.min(width, 1200),
     height: Math.min(height, 800),
-    frame: false, // 프레임 없는 창
+    frame: false, // ?꾨젅???녿뒗 李?
     transparent: false,
-    backgroundColor: '#262626', // 칠판 배경색 업데이트
-    icon: ICON_PATH, // 애플리케이션 아이콘 설정
+    backgroundColor: '#262626', // 移좏뙋 諛곌꼍???낅뜲?댄듃
+    icon: ICON_PATH, // ?좏뵆由ъ??댁뀡 ?꾩씠肄??ㅼ젙
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -31,39 +31,39 @@ function createWindow() {
     }
   });
 
-  // 웹 페이지 로드
+  // ???섏씠吏 濡쒕뱶
   mainWindow.loadFile('index.html');
   
-  // 개발 환경에서만 개발자 툴 열기
+  // 媛쒕컻 ?섍꼍?먯꽌留?媛쒕컻?????닿린
   if (process.argv.includes('--dev')) {
     mainWindow.webContents.openDevTools();
   }
 
-  // 창 설정 저장 로드
+  // 李??ㅼ젙 ???濡쒕뱶
   loadWindowSettings();
   
-  // 창 닫힐 때 설정 저장
+  // 李??ロ옄 ???ㅼ젙 ???
   mainWindow.on('close', (event) => {
-    // 칠판 데이터 저장 요청
+    // 移좏뙋 ?곗씠??????붿껌
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('save-before-quit');
     }
     saveWindowSettings();
   });
   
-  // 시스템 트레이 설정
+  // ?쒖뒪???몃젅???ㅼ젙
   createTray();
 }
 
-// 앱이 준비되면 윈도우 생성
+// ?깆씠 以鍮꾨릺硫??덈룄???앹꽦
 app.on('ready', () => {
   createWindow();
 
-  // 자동 실행 설정 (패키징된 앱에서만)
+  // ?먮룞 ?ㅽ뻾 ?ㅼ젙 (?⑦궎吏뺣맂 ?깆뿉?쒕쭔)
   if (app.isPackaged) { 
     app.setLoginItemSettings({
       openAtLogin: true,
-      path: process.execPath, // 현재 실행 파일 경로 사용
+      path: process.execPath, // ?꾩옱 ?ㅽ뻾 ?뚯씪 寃쎈줈 ?ъ슜
       args: []
     });
   }
@@ -73,36 +73,36 @@ app.on('ready', () => {
   });
 });
 
-// 앱 종료 전 데이터 저장
+// ??醫낅즺 ???곗씠?????
 app.on('before-quit', async (event) => {
-  console.log('🔄 앱 종료 전 데이터 저장 시작');
+  console.log('?봽 ??醫낅즺 ???곗씠??????쒖옉');
 
   if (mainWindow && !mainWindow.isDestroyed()) {
     event.preventDefault();
 
     try {
-      // 렌더러에 저장 요청
+      // ?뚮뜑?ъ뿉 ????붿껌
       mainWindow.webContents.send('save-before-quit');
 
-      // 저장 완료까지 잠시 대기
+      // ????꾨즺源뚯? ?좎떆 ?湲?
       await new Promise(resolve => setTimeout(resolve, 500));
 
-      console.log('✅ 앱 종료 전 데이터 저장 완료');
+      console.log('????醫낅즺 ???곗씠??????꾨즺');
     } catch (error) {
-      console.error('❌ 앱 종료 전 저장 오류:', error);
+      console.error('????醫낅즺 ??????ㅻ쪟:', error);
     }
 
-    // 실제 종료
+    // ?ㅼ젣 醫낅즺
     app.exit(0);
   }
 });
 
-// 모든 창이 닫히면 앱 종료 (macOS 제외)
+// 紐⑤뱺 李쎌씠 ?ロ엳硫???醫낅즺 (macOS ?쒖쇅)
 app.on('window-all-closed', function () {
   if (process.platform !== 'darwin') app.quit();
 });
 
-// 창 설정 저장
+// 李??ㅼ젙 ???
 function saveWindowSettings() {
   if (!mainWindow) return;
   
@@ -121,7 +121,7 @@ function saveWindowSettings() {
   }
 }
 
-// 창 설정 로드
+// 李??ㅼ젙 濡쒕뱶
 function loadWindowSettings() {
   try {
     if (fs.existsSync(USER_DATA_PATH)) {
@@ -131,7 +131,7 @@ function loadWindowSettings() {
         mainWindow.setBounds(data.bounds);
       }
       
-      // Always-on-top 상태 복원
+      // Always-on-top ?곹깭 蹂듭썝
       if (typeof data.isAlwaysOnTop === 'boolean') {
         mainWindow.setAlwaysOnTop(data.isAlwaysOnTop);
       }
@@ -141,33 +141,33 @@ function loadWindowSettings() {
   }
 }
 
-// 시스템 트레이 생성 함수
+// ?쒖뒪???몃젅???앹꽦 ?⑥닔
 function createTray() {
-  // 트레이 아이콘이 이미 있으면 새로 생성하지 않음
+  // ?몃젅???꾩씠肄섏씠 ?대? ?덉쑝硫??덈줈 ?앹꽦?섏? ?딆쓬
   if (tray) return;
   
   try {
-    // 아이콘 생성 (파일이 없으면 기본 아이콘 사용)
+    // ?꾩씠肄??앹꽦 (?뚯씪???놁쑝硫?湲곕낯 ?꾩씠肄??ъ슜)
     let trayIcon;
     try {
       if (fs.existsSync(ICON_PATH)) {
         trayIcon = nativeImage.createFromPath(ICON_PATH);
       } else {
-        // 기본 아이콘 사용 (Electron 기본 아이콘)
-        console.log('아이콘 파일을 찾을 수 없어 기본 아이콘을 사용합니다.');
+        // 湲곕낯 ?꾩씠肄??ъ슜 (Electron 湲곕낯 ?꾩씠肄?
+        console.log('?꾩씠肄??뚯씪??李얠쓣 ???놁뼱 湲곕낯 ?꾩씠肄섏쓣 ?ъ슜?⑸땲??');
       }
     } catch (error) {
-      console.error('아이콘 로드 오류:', error);
+      console.error('?꾩씠肄?濡쒕뱶 ?ㅻ쪟:', error);
     }
     
-    // 트레이 생성
+    // ?몃젅???앹꽦
     tray = new Tray(trayIcon || nativeImage.createEmpty());
-    tray.setToolTip('화면 칠판');
+    tray.setToolTip('?붾㈃ 移좏뙋');
     
-    // 트레이 메뉴 설정
+    // ?몃젅??硫붾돱 ?ㅼ젙
     const contextMenu = Menu.buildFromTemplate([
       { 
-        label: '칠판 표시', 
+        label: '移좏뙋 ?쒖떆', 
         click: () => {
           if (mainWindow) {
             mainWindow.show();
@@ -177,7 +177,7 @@ function createTray() {
       },
       { type: 'separator' },
       { 
-        label: '종료', 
+        label: '醫낅즺', 
         click: () => {
           app.quit();
         } 
@@ -186,7 +186,7 @@ function createTray() {
     
     tray.setContextMenu(contextMenu);
     
-    // 트레이 아이콘 클릭 시 윈도우 표시/숨김 토글
+    // ?몃젅???꾩씠肄??대┃ ???덈룄???쒖떆/?④? ?좉?
     tray.on('click', () => {
       if (mainWindow) {
         if (mainWindow.isVisible()) {
@@ -198,22 +198,22 @@ function createTray() {
       }
     });
   } catch (error) {
-    console.error('트레이 생성 오류:', error);
+    console.error('?몃젅???앹꽦 ?ㅻ쪟:', error);
   }
 }
 
-// IPC 이벤트 처리
+// IPC ?대깽??泥섎━
 ipcMain.on('set-always-on-top', (event, value) => {
   if (mainWindow) {
     mainWindow.setAlwaysOnTop(value);
     console.log('Always on top set to:', value);
     
-    // 즉시 설정 저장
+    // 利됱떆 ?ㅼ젙 ???
     saveWindowSettings();
   }
 });
 
-// 기본 창 컨트롤 기능
+// 湲곕낯 李?而⑦듃濡?湲곕뒫
 ipcMain.on('minimize-window', () => {
   if (mainWindow) {
     mainWindow.minimize();
@@ -234,7 +234,7 @@ ipcMain.on('close-window', () => {
   app.quit();
 });
 
-// 데이터 저장 및 로드 IPC 핸들러
+// ?곗씠?????諛?濡쒕뱶 IPC ?몃뱾??
 ipcMain.handle('save-data', (event, key, data) => {
   try {
     let filePath;
@@ -247,10 +247,10 @@ ipcMain.handle('save-data', (event, key, data) => {
     }
     
     fs.writeFileSync(filePath, data);
-    console.log(`✅ 데이터 저장 성공: ${key}`);
+    console.log(`???곗씠??????깃났: ${key}`);
     return true;
   } catch (error) {
-    console.error(`❌ 데이터 저장 실패: ${key}`, error);
+    console.error(`???곗씠??????ㅽ뙣: ${key}`, error);
     return false;
   }
 });
@@ -268,12 +268,13 @@ ipcMain.handle('load-data', (event, key) => {
     
     if (fs.existsSync(filePath)) {
       const data = fs.readFileSync(filePath, 'utf-8');
-      console.log(`✅ 데이터 로드 성공: ${key}`);
+      console.log(`???곗씠??濡쒕뱶 ?깃났: ${key}`);
       return data;
     }
     return null;
   } catch (error) {
-    console.error(`❌ 데이터 로드 실패: ${key}`, error);
+    console.error(`???곗씠??濡쒕뱶 ?ㅽ뙣: ${key}`, error);
     return null;
   }
 });
+

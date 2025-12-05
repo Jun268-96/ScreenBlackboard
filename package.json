@@ -6,7 +6,7 @@
   "scripts": {
     "start": "electron .",
     "dev": "electron . --dev",
-    "package": "npx @electron/packager . ScreenBlackboard --platform=win32 --arch=x64 --out=dist --icon=icons/chalkboard-icon.png --overwrite --asar --prune=true --executable-name=ScreenBlackboard",
+    "package": "npx @electron/packager . ScreenBlackboard --platform=win32 --arch=x64 --out=dist --icon=icons/favicon.ico --overwrite --asar --prune=true --executable-name=ScreenBlackboard",
     "build": "electron-builder --win --x64",
     "clean": "rm -rf dist/deploy dist/win-unpacked dist/.icon-ico dist/builder-debug.yml dist/*.blockmap",
     "postinstall": "electron-builder install-app-deps"
@@ -22,7 +22,7 @@
     "artifactName": "ScreenBlackboard-${version}.${ext}",
     "win": {
       "target": "portable",
-      "icon": "icons/chalkboard-icon.png"
+      "icon": "icons/favicon.ico"
     },
     "nsis": {
       "oneClick": false,
@@ -55,3 +55,4 @@
     "electron-packager": "^17.1.2"
   }
 }
+
