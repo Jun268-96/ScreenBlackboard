@@ -1,25 +1,25 @@
 {
   "name": "chalkboard-widget",
   "version": "1.0.1",
-  "description": "데스크톱 칠판 위젯",
+  "description": "Chalkboard widget",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
     "dev": "electron . --dev",
-    "package": "npx @electron/packager . 여기보세요 --platform=win32 --arch=x64 --out=dist --icon=icons/chalkboard-icon.png --overwrite --asar --prune=true --executable-name=여기보세요",
+    "package": "npx @electron/packager . ScreenBlackboard --platform=win32 --arch=x64 --out=dist --icon=icons/chalkboard-icon.png --overwrite --asar --prune=true --executable-name=ScreenBlackboard",
     "build": "electron-builder --win --x64",
     "clean": "rm -rf dist/deploy dist/win-unpacked dist/.icon-ico dist/builder-debug.yml dist/*.blockmap",
     "postinstall": "electron-builder install-app-deps"
   },
   "build": {
-    "appId": "com.example.chalkboard",
-    "productName": "여기보세요",
+    "appId": "com.jun.screenblackboard",
+    "productName": "ScreenBlackboard",
     "directories": {
       "output": "dist",
       "buildResources": "icons"
     },
     "asar": true,
-    "artifactName": "여기보세요-${version}.${ext}",
+    "artifactName": "ScreenBlackboard-${version}.${ext}",
     "win": {
       "target": "portable",
       "icon": "icons/chalkboard-icon.png"

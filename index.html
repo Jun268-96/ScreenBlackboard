@@ -1,39 +1,36 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="ko">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>?붾㈃ 移좏뙋</title>
-  <!-- 紐⑤뱢?붾맂 ?ㅽ???-->
+  <title>화면 칠판</title>
   <link href="./src/main.css" rel="stylesheet">
 </head>
 <body>
-  <!-- 李??쒖뼱 ?곷떒 諛?(?쒕옒洹?媛?? -->
   <div id="titleBar">
     <div class="tabs-container">
-      <div class="tabs-wrapper">
-      </div>
-      <button id="addTabButton" class="add-tab-btn" title="??移좏뙋 異붽?">+</button>
+      <div class="tabs-wrapper"></div>
+      <button id="addTabButton" class="add-tab-btn" title="새 칠판 추가">+</button>
       <button id="saveButton" class="save-btn" title="수동 저장">저장</button>
     </div>
     <div class="window-controls">
-      <button id="alwaysOnTopButton" title="??긽 ?꾩뿉">
+      <button id="alwaysOnTopButton" title="항상 위에">
         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
           <path d="M8 1a.5.5 0 0 1 .5.5v6.793l2.146-2.147a.5.5 0 0 1 .708.708l-3 3a.5.5 0 0 1-.708 0l-3-3a.5.5 0 0 1 .708-.708L7.5 7.293V1.5A.5.5 0 0 1 8 1z"/>
         </svg>
       </button>
-      <button id="minimizeButton" title="理쒖냼??>
+      <button id="minimizeButton" title="최소화">
         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
           <path d="M14 8a1 1 0 0 1-1 1H3a1 1 0 0 1 0-2h10a1 1 0 0 1 1 1z"/>
         </svg>
       </button>
-      <button id="maximizeButton" title="理쒕???>
+      <button id="maximizeButton" title="최대화">
         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
           <path d="M14 2a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1h12zM2 1a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V3a2 2 0 0 0-2-2H2z"/>
           <path d="M13 4H3v8h10V4z"/>
         </svg>
       </button>
-      <button id="closeButton" title="?リ린">
+      <button id="closeButton" title="닫기">
         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
           <path d="M4.646 4.646a.5.5 0 0 1 .708 0L8 7.293l2.646-2.647a.5.5 0 0 1 .708.708L8.707 8l2.647 2.646a.5.5 0 0 1-.708.708L8 8.707l-2.646 2.647a.5.5 0 0 1-.708-.708L7.293 8 4.646 5.354a.5.5 0 0 1 0-.708z"/>
         </svg>
@@ -41,18 +38,15 @@
     </div>
   </div>
 
-  <!-- ??肄섑뀗痢??곸뿭 -->
-  <div id="tabContents">
-  </div>
+  <div id="tabContents"></div>
 
-  <!-- ?ъ씠?쒕컮 ?쒓컙??-->
   <div id="sidebar" class="sidebar">
     <div class="timetable-container">
-      <h2 class="timetable-header">?ㅻ뒛???쒓컙??/h2>
+      <h2 class="timetable-header">오늘의 시간표</h2>
       <div id="timetableList"></div>
       <div class="timetable-actions">
-        <button class="timetable-btn" onclick="addTimetableItem()">異붽?</button>
-        <button class="timetable-btn" onclick="clearChecked()">泥댄겕??怨쇰ぉ ??젣</button>
+        <button class="timetable-btn" onclick="addTimetableItem()">추가</button>
+        <button class="timetable-btn" onclick="clearChecked()">체크된 과목 삭제</button>
       </div>
     </div>
   </div>
@@ -60,7 +54,6 @@
     <span class="sidebar-arrow"></span>
   </button>
 
-  <!-- ?ㅽ겕由쏀듃 濡쒕뱶 -->
   <script src="./src/text-formatter.js"></script>
   <script src="./src/renderer.js"></script>
 </body>

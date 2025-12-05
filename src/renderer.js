@@ -67,7 +67,7 @@ class TabData {
 
 // Initialize when DOM is loaded
 document.addEventListener('DOMContentLoaded', function() {
-  console.log('?뱥 移좏뙋 ???쒖옉');
+  console.log('화면 칠판 시작');
 
   // Load saved data first; if none exists, create the initial tab
   loadAllTabsData().then((loaded) => {
@@ -98,7 +98,7 @@ document.addEventListener('DOMContentLoaded', function() {
     });
   }
 
-  console.log('??移좏뙋 ??珥덇린???꾨즺');
+  console.log('화면 칠판 초기화 완료');
 });
 
 // Window Controls
@@ -121,7 +121,7 @@ function setupWindowControls() {
         
         // Update button appearance
         alwaysOnTopButton.classList.toggle('active', isAlwaysOnTop);
-        alwaysOnTopButton.title = isAlwaysOnTop ? '??긽 ?꾩뿉 (?쒖꽦)' : '??긽 ?꾩뿉';
+        alwaysOnTopButton.title = isAlwaysOnTop ? '항상 위에 (설정)' : '항상 위에';
         
         console.log('Always on top:', isAlwaysOnTop);
       }
@@ -284,78 +284,79 @@ function createTabContent(tabId) {
   contentElement.dataset.tabId = tabId;
   
   contentElement.innerHTML = `
-    <div class="toolbar" data-tab-id="${tabId}">
-      <div class="toolbar-group">
-        <button id="boldBtn" class="format-btn" title="援듦쾶 (Ctrl+B)">
-          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M6 4h8a4 4 0 0 1 4 4 4 4 0 0 1-4 4H6z"></path>
-            <path d="M6 12h9a4 4 0 0 1 4 4 4 4 0 0 1-4 4H6z"></path>
-          </svg>
-        </button>
-        <button id="italicBtn" class="format-btn" title="湲곗슱??(Ctrl+I)">
-          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <line x1="19" y1="4" x2="10" y2="4"></line>
-            <line x1="14" y1="20" x2="5" y2="20"></line>
-            <line x1="15" y1="4" x2="9" y2="20"></line>
-          </svg>
-        </button>
-        <button id="underlineBtn" class="format-btn" title="諛묒쨪 (Ctrl+U)">
-          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M6 3v7a6 6 0 0 0 6 6 6 6 0 0 0 6-6V3"></path>
-            <line x1="4" y1="21" x2="20" y2="21"></line>
-          </svg>
-        </button>
-      </div>
-      <div class="divider"></div>
-      <div class="color-picker-container">
-        <button id="colorButton" class="color-button" title="湲???됱긽">
-          <div class="color-preview" style="background-color: #ffffff;"></div>
-        </button>
-        <div class="predefined-colors">
-          <div class="color-swatch" style="background-color: #ffffff;" data-color="#ffffff" title="?섏???></div>
-          <div class="color-swatch" style="background-color: #f87171;" data-color="#f87171" title="鍮④컙??></div>
-          <div class="color-swatch" style="background-color: #fbbf24;" data-color="#fbbf24" title="?몃???></div>
-          <div class="color-swatch" style="background-color: #34d399;" data-color="#34d399" title="珥덈줉??></div>
-          <div class="color-swatch" style="background-color: #60a5fa;" data-color="#60a5fa" title="?뚮???></div>
-          <div class="color-swatch" style="background-color: #a78bfa;" data-color="#a78bfa" title="蹂대씪??></div>
-          <div class="color-swatch" style="background-color: #f472b6;" data-color="#f472b6" title="遺꾪솉??></div>
-          <div class="color-more" title="??留롮? ?됱긽">
-            <input type="color" id="colorPicker" value="#ffffff" style="opacity: 0; position: absolute; width: 1px; height: 1px; left: -1000px;">
-            ?붾낫湲?          </div>
+      <div class="toolbar" data-tab-id="${tabId}">
+        <div class="toolbar-group">
+          <button id="boldBtn" class="format-btn" title="굵게 (Ctrl+B)">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M6 4h8a4 4 0 0 1 4 4 4 4 0 0 1-4 4H6z"></path>
+              <path d="M6 12h9a4 4 0 0 1 4 4 4 4 0 0 1-4 4H6z"></path>
+            </svg>
+          </button>
+          <button id="italicBtn" class="format-btn" title="기울임 (Ctrl+I)">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="19" y1="4" x2="10" y2="4"></line>
+              <line x1="14" y1="20" x2="5" y2="20"></line>
+              <line x1="15" y1="4" x2="9" y2="20"></line>
+            </svg>
+          </button>
+          <button id="underlineBtn" class="format-btn" title="밑줄 (Ctrl+U)">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M6 3v7a6 6 0 0 0 6 6 6 6 0 0 0 6-6V3"></path>
+              <line x1="4" y1="21" x2="20" y2="21"></line>
+            </svg>
+          </button>
         </div>
-      </div>
-      <div class="divider"></div>
-      <div class="font-size-control">
-        <label for="fontSizeInput" class="font-size-label">?ш린:</label>
-        <div class="font-size-input-group">
-          <input type="number" id="fontSizeInput" class="font-size-input" 
-                 value="72" min="8" max="200" title="湲???ш린">
-          <div class="font-size-stepper">
-            <button id="fontSizeDown" class="font-size-step-btn" title="?ш린 媛먯냼">-</button>
-            <button id="fontSizeUp" class="font-size-step-btn" title="?ш린 利앷?">+</button>
+        <div class="divider"></div>
+        <div class="color-picker-container">
+          <button id="colorButton" class="color-button" title="글자색">
+            <div class="color-preview" style="background-color: #ffffff;"></div>
+          </button>
+          <div class="predefined-colors">
+            <div class="color-swatch" style="background-color: #ffffff;" data-color="#ffffff" title="흰색"></div>
+            <div class="color-swatch" style="background-color: #f87171;" data-color="#f87171" title="빨간색"></div>
+            <div class="color-swatch" style="background-color: #fbbf24;" data-color="#fbbf24" title="노란색"></div>
+            <div class="color-swatch" style="background-color: #34d399;" data-color="#34d399" title="초록색"></div>
+            <div class="color-swatch" style="background-color: #60a5fa;" data-color="#60a5fa" title="파란색"></div>
+            <div class="color-swatch" style="background-color: #a78bfa;" data-color="#a78bfa" title="보라색"></div>
+            <div class="color-swatch" style="background-color: #f472b6;" data-color="#f472b6" title="분홍색"></div>
+            <div class="color-more" title="더 많은 색상">
+              <input type="color" id="colorPicker" value="#ffffff" style="opacity: 0; position: absolute; width: 1px; height: 1px; left: -1000px;">
+              더 보기
+            </div>
           </div>
         </div>
-        <select id="fontSizeSelect" class="font-size-select" title="誘몃━ ?뺤쓽???ш린">
-          <option value="16">16px</option>
-          <option value="18">18px</option>
-          <option value="20">20px</option>
-          <option value="24">24px</option>
-          <option value="30">30px</option>
-          <option value="36">36px</option>
-          <option value="42">42px</option>
-          <option value="48">48px</option>
-          <option value="56">56px</option>
-          <option value="64">64px</option>
-          <option value="72" selected>72px</option>
-          <option value="96">96px</option>
-          <option value="120">120px</option>
-          <option value="144">144px</option>
-        </select>
+        <div class="divider"></div>
+        <div class="font-size-control">
+          <label for="fontSizeInput" class="font-size-label">크기:</label>
+          <div class="font-size-input-group">
+            <input type="number" id="fontSizeInput" class="font-size-input" 
+                   value="72" min="8" max="200" title="글자 크기">
+            <div class="font-size-stepper">
+              <button id="fontSizeDown" class="font-size-step-btn" title="크기 감소">-</button>
+              <button id="fontSizeUp" class="font-size-step-btn" title="크기 증가">+</button>
+            </div>
+          </div>
+          <select id="fontSizeSelect" class="font-size-select" title="미리 정의된 크기">
+            <option value="16">16px</option>
+            <option value="18">18px</option>
+            <option value="20">20px</option>
+            <option value="24">24px</option>
+            <option value="30">30px</option>
+            <option value="36">36px</option>
+            <option value="42">42px</option>
+            <option value="48">48px</option>
+            <option value="56">56px</option>
+            <option value="64">64px</option>
+            <option value="72" selected>72px</option>
+            <option value="96">96px</option>
+            <option value="120">120px</option>
+            <option value="144">144px</option>
+          </select>
+        </div>
       </div>
-    </div>
-    <div class="chalkboard" contenteditable="true" data-tab-id="${tabId}">
-    </div>
-  `;
+      <div class="chalkboard" contenteditable="true" data-tab-id="${tabId}">
+      </div>
+    `;
   
   tabContents.appendChild(contentElement);
   
@@ -861,7 +862,7 @@ function addTimetableItem() {
   itemDiv.className = 'timetable-item';
   itemDiv.innerHTML = `
     <div class="timetable-number">${itemNumber}</div>
-    <input type="text" class="timetable-subject" placeholder="怨쇰ぉ紐낆쓣 ?낅젰?섏꽭??>
+    <input type="text" class="timetable-subject" placeholder="과목명을 입력하세요">
     <input type="checkbox" class="timetable-checkbox">
   `;
   
@@ -946,7 +947,7 @@ async function loadTimetable() {
       itemDiv.className = 'timetable-item';
       itemDiv.innerHTML = `
         <div class="timetable-number">${index + 1}</div>
-        <input type="text" class="timetable-subject" value="${item.subject}" placeholder="怨쇰ぉ紐낆쓣 ?낅젰?섏꽭??>
+        <input type="text" class="timetable-subject" value="${item.subject}" placeholder="과목명을 입력하세요">
         <input type="checkbox" class="timetable-checkbox" ${item.checked ? 'checked' : ''}>
       `;
       
