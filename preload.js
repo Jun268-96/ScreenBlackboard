@@ -1,23 +1,22 @@
-// preload.js
 const { contextBridge, ipcRenderer } = require('electron');
 
-// Electron API를 안전하게 노출
 contextBridge.exposeInMainWorld('electronAPI', {
-  // 창 제어
   minimizeWindow: () => ipcRenderer.send('minimize-window'),
   maximizeWindow: () => ipcRenderer.send('maximize-window'),
   closeWindow: () => ipcRenderer.send('close-window'),
   setAlwaysOnTop: (value) => ipcRenderer.send('set-always-on-top', value),
-
-  // 데이터 저장 및 로드 (ipcRenderer를 통해)
-  saveContent: (content) => ipcRenderer.send('save-content', content),
-  loadContent: () => ipcRenderer.invoke('load-content'),
-
-  // 앱 종료 전 저장 이벤트 리스너
-  onSaveBeforeQuit: (callback) => ipcRenderer.on('save-before-quit', callback),
+  getWindowState: () => ipcRenderer.invoke('get-window-state'),
+  getStartupState: () => ipcRenderer.invoke('get-startup-state'),
+  getDisplays: () => ipcRenderer.invoke('get-displays'),
+  moveWindowToDisplay: (displayId) => ipcRenderer.invoke('move-window-to-display', displayId),
+  onSaveBeforeQuit: (callback) => {
+    const listener = () => callback();
+    ipcRenderer.on('save-before-quit', listener);
+    return () => ipcRenderer.removeListener('save-before-quit', listener);
+  },
+  notifySaveBeforeQuitDone: () => ipcRenderer.send('save-before-quit-done')
 });
 
-// 파일 시스템 기반 데이터 저장 API
 contextBridge.exposeInMainWorld('storageAPI', {
   setItem: async (key, value) => {
     try {

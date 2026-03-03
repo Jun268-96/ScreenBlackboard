@@ -21,38 +21,19 @@ class SimpleTextFormatter {
   // Apply formatting to selected text or set formatting for new text
   applyFormat(chalkboard, format) {
     const selection = window.getSelection();
-    
-    console.log('🔧 TextFormatter.applyFormat called with:', format);
-    console.log('🎯 Selection details:', {
-      rangeCount: selection.rangeCount,
-      selectedText: selection.toString(),
-      type: selection.type
-    });
-    
-    if (selection.rangeCount === 0) {
-      console.log('⚠️ No range found, returning early');
-      return;
-    }
+    const hasSelection = selection && selection.rangeCount > 0;
+    const range = hasSelection ? selection.getRangeAt(0) : null;
+    const selectionInBoard = range ? this.isRangeInsideChalkboard(chalkboard, range) : false;
 
-    const range = selection.getRangeAt(0);
-    
-    console.log('📏 Range details:', {
-      collapsed: range.collapsed,
-      startContainer: range.startContainer,
-      endContainer: range.endContainer,
-      startOffset: range.startOffset,
-      endOffset: range.endOffset,
-      commonAncestorContainer: range.commonAncestorContainer
-    });
-    
-    if (range.collapsed) {
-      // No text selected - set format for future typing
-      console.log('📝 Setting typing format (no selection)');
-      this.setTypingFormat(chalkboard, format);
-    } else {
+    if (range && selectionInBoard && !range.collapsed) {
       // Text is selected - apply format to selection
-      console.log('🎨 Applying format to selected text:', selection.toString());
-      this.formatSelection(range, format);
+      const applied = this.formatSelection(range, format);
+      if (!applied) {
+        this.setTypingFormat(chalkboard, format);
+      }
+    } else {
+      // No valid text selection - set format for future typing
+      this.setTypingFormat(chalkboard, format);
     }
     
     // Update current format state
@@ -71,6 +52,7 @@ class SimpleTextFormatter {
     // Also apply to chalkboard style for immediate visual feedback
     if (format.fontSize) {
       chalkboard.style.fontSize = `${format.fontSize}px`;
+      chalkboard.style.lineHeight = this.calculateLineHeight(format.fontSize);
     }
     if (format.color) {
       chalkboard.style.color = format.color;
@@ -79,67 +61,62 @@ class SimpleTextFormatter {
 
   // Apply format to selected text
   formatSelection(range, format) {
-    console.log('🎯 formatSelection called with range and format:', format);
-    
     try {
       // Extract the selected content
       const contents = range.extractContents();
-      console.log('📦 Extracted contents:', contents);
+      if (!contents || !contents.hasChildNodes()) {
+        return false;
+      }
       
       // Create a wrapper span with the new formatting
       const wrapper = document.createElement('span');
-      console.log('🎁 Created wrapper span');
       this.applyStylesToElement(wrapper, format);
       
       // Move the content into the wrapper
       wrapper.appendChild(contents);
-      console.log('📄 Content moved to wrapper');
       
       // Insert the formatted content back
       range.insertNode(wrapper);
-      console.log('✅ Wrapper inserted into DOM at range position');
       
-      // Clear selection
-      window.getSelection().removeAllRanges();
-      console.log('🎯 Selection cleared');
+      // Keep selection on newly formatted content so repeated adjustments are easy
+      const selection = window.getSelection();
+      const newRange = document.createRange();
+      newRange.selectNodeContents(wrapper);
+      selection.removeAllRanges();
+      selection.addRange(newRange);
+      return true;
     } catch (error) {
-      console.error('❌ Error formatting selection:', error);
+      console.error('Error formatting selection:', error);
+      return false;
     }
+  }
+
+  isRangeInsideChalkboard(chalkboard, range) {
+    if (!chalkboard || !range) {
+      return false;
+    }
+    const container = range.commonAncestorContainer;
+    return container === chalkboard || chalkboard.contains(container);
   }
 
   // Apply styles to an element
   applyStylesToElement(element, format) {
-    console.log('🎨 applyStylesToElement called with format:', format);
-    
     if (format.fontSize) {
       element.style.fontSize = `${format.fontSize}px`;
       element.style.lineHeight = this.calculateLineHeight(format.fontSize);
-      console.log('📝 Applied fontSize:', format.fontSize + 'px');
     }
     if (format.color) {
       element.style.color = format.color;
-      console.log('🎨 Applied color:', format.color);
     }
     if (format.fontWeight) {
       element.style.fontWeight = format.fontWeight;
-      console.log('📝 Applied fontWeight:', format.fontWeight);
     }
     if (format.fontStyle) {
       element.style.fontStyle = format.fontStyle;
-      console.log('📝 Applied fontStyle:', format.fontStyle);
     }
     if (format.textDecoration) {
       element.style.textDecoration = format.textDecoration;
-      console.log('📝 Applied textDecoration:', format.textDecoration);
     }
-    
-    console.log('✅ Final element styles:', {
-      fontSize: element.style.fontSize,
-      color: element.style.color,
-      fontWeight: element.style.fontWeight,
-      fontStyle: element.style.fontStyle,
-      textDecoration: element.style.textDecoration
-    });
   }
 
   // Calculate optimal line height based on font size
@@ -324,7 +301,6 @@ class SimpleTextFormatter {
   // Set font size
   setFontSize(chalkboard, fontSize) {
     const clampedSize = Math.max(8, Math.min(200, fontSize));
-    console.log('📏 Setting font size:', clampedSize);
     this.applyFormat(chalkboard, { fontSize: clampedSize });
   }
 

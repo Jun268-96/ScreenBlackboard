@@ -1,29 +1,187 @@
-﻿const { app, BrowserWindow, ipcMain, screen, Tray, Menu, nativeImage } = require('electron');
-const path = require('path');
+const { app, BrowserWindow, ipcMain, screen, Tray, Menu, nativeImage } = require('electron');
 const fs = require('fs');
+const path = require('path');
 
-// ?섍꼍?ㅼ젙 ?곗씠?????寃쎈줈
-const USER_DATA_PATH = path.join(app.getPath('userData'), 'chalkboard-data.json');
+const WINDOW_SETTINGS_PATH = path.join(app.getPath('userData'), 'window-settings.json');
+const LEGACY_WINDOW_SETTINGS_PATH = path.join(app.getPath('userData'), 'chalkboard-data.json');
 const CHALKBOARD_DATA_PATH = path.join(app.getPath('userData'), 'chalkboard-content.json');
 const TIMETABLE_DATA_PATH = path.join(app.getPath('userData'), 'timetable-content.json');
-
-// ?좏뵆由ъ??댁뀡 ?꾩씠肄?寃쎈줈 (32x32 ?ш린媛 沅뚯옣??
+const SNAPSHOTS_DATA_PATH = path.join(app.getPath('userData'), 'snapshots-content.json');
+const APP_SETTINGS_DATA_PATH = path.join(app.getPath('userData'), 'app-settings.json');
+const SESSION_STATE_PATH = path.join(app.getPath('userData'), 'session-state.json');
 const ICON_PATH = path.join(__dirname, 'icons', 'favicon.ico');
+
+const DATA_FILE_MAP = {
+  'chalkboard-data': CHALKBOARD_DATA_PATH,
+  'timetable-data': TIMETABLE_DATA_PATH,
+  'chalkboard-snapshots': SNAPSHOTS_DATA_PATH,
+  'app-settings': APP_SETTINGS_DATA_PATH
+};
 
 let mainWindow;
 let tray = null;
+let isQuitting = false;
+let startupState = {
+  wasUncleanExit: false,
+  startedAt: Date.now()
+};
+
+function readJsonFile(filePath) {
+  try {
+    if (!fs.existsSync(filePath)) {
+      return null;
+    }
+    const raw = fs.readFileSync(filePath, 'utf-8');
+    return JSON.parse(raw);
+  } catch (error) {
+    console.error(`Failed to read JSON: ${filePath}`, error);
+    return null;
+  }
+}
+
+function writeJsonFile(filePath, data) {
+  try {
+    fs.writeFileSync(filePath, JSON.stringify(data), 'utf-8');
+    return true;
+  } catch (error) {
+    console.error(`Failed to write JSON: ${filePath}`, error);
+    return false;
+  }
+}
+
+function getCurrentDisplay() {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return null;
+  }
+  return screen.getDisplayMatching(mainWindow.getBounds());
+}
+
+function getDisplayId(display) {
+  if (!display) {
+    return null;
+  }
+  return String(display.id);
+}
+
+function initSessionState() {
+  const previousState = readJsonFile(SESSION_STATE_PATH);
+  const wasUncleanExit = Boolean(previousState && previousState.running);
+
+  startupState = {
+    wasUncleanExit,
+    startedAt: Date.now()
+  };
+
+  writeJsonFile(SESSION_STATE_PATH, {
+    running: true,
+    startedAt: startupState.startedAt
+  });
+}
+
+function markSessionClosed() {
+  writeJsonFile(SESSION_STATE_PATH, {
+    running: false,
+    closedAt: Date.now()
+  });
+}
+
+function loadWindowSettings() {
+  try {
+    const modernData = readJsonFile(WINDOW_SETTINGS_PATH);
+    const legacyData = modernData ? null : readJsonFile(LEGACY_WINDOW_SETTINGS_PATH);
+    const data = modernData || legacyData;
+
+    if (!data) {
+      return;
+    }
+
+    if (typeof data.isAlwaysOnTop === 'boolean') {
+      mainWindow.setAlwaysOnTop(data.isAlwaysOnTop);
+    }
+
+    if (data.perDisplayBounds && data.lastDisplayId) {
+      const savedBounds = data.perDisplayBounds[data.lastDisplayId];
+      if (savedBounds) {
+        mainWindow.setBounds(savedBounds);
+        return;
+      }
+    }
+
+    if (data.bounds) {
+      mainWindow.setBounds(data.bounds);
+    }
+  } catch (error) {
+    console.error('Failed to load window settings:', error);
+  }
+}
+
+function saveWindowSettings() {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return;
+  }
+
+  const existing = readJsonFile(WINDOW_SETTINGS_PATH) || {};
+  const display = getCurrentDisplay();
+  const displayId = getDisplayId(display) || 'unknown';
+
+  const perDisplayBounds = existing.perDisplayBounds || {};
+  perDisplayBounds[displayId] = mainWindow.getBounds();
+
+  const data = {
+    bounds: mainWindow.getBounds(),
+    isAlwaysOnTop: mainWindow.isAlwaysOnTop(),
+    lastDisplayId: displayId,
+    perDisplayBounds
+  };
+
+  writeJsonFile(WINDOW_SETTINGS_PATH, data);
+}
+
+function moveWindowToDisplay(displayId) {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return false;
+  }
+
+  const targetId = String(displayId);
+  const displays = screen.getAllDisplays();
+  const targetDisplay = displays.find((display) => String(display.id) === targetId);
+
+  if (!targetDisplay) {
+    return false;
+  }
+
+  const settings = readJsonFile(WINDOW_SETTINGS_PATH) || {};
+  const savedBounds = settings.perDisplayBounds && settings.perDisplayBounds[targetId];
+
+  if (savedBounds) {
+    mainWindow.setBounds(savedBounds);
+  } else {
+    const currentBounds = mainWindow.getBounds();
+    const workArea = targetDisplay.workArea;
+    const width = Math.min(currentBounds.width, workArea.width);
+    const height = Math.min(currentBounds.height, workArea.height);
+    const x = Math.round(workArea.x + (workArea.width - width) / 2);
+    const y = Math.round(workArea.y + (workArea.height - height) / 2);
+    mainWindow.setBounds({ x, y, width, height });
+  }
+
+  mainWindow.show();
+  mainWindow.focus();
+  saveWindowSettings();
+  return true;
+}
 
 function createWindow() {
-  const { width, height } = screen.getPrimaryDisplay().workAreaSize;
-  
-  // 硫붿씤 ?덈룄???앹꽦
+  const primaryDisplay = screen.getPrimaryDisplay();
+  const workArea = primaryDisplay.workAreaSize;
+
   mainWindow = new BrowserWindow({
-    width: Math.min(width, 1200),
-    height: Math.min(height, 800),
-    frame: false, // ?꾨젅???녿뒗 李?
+    width: Math.min(workArea.width, 1400),
+    height: Math.min(workArea.height, 900),
+    frame: false,
     transparent: false,
-    backgroundColor: '#262626', // 移좏뙋 諛곌꼍???낅뜲?댄듃
-    icon: ICON_PATH, // ?좏뵆由ъ??댁뀡 ?꾩씠肄??ㅼ젙
+    backgroundColor: '#1b1b1b',
+    icon: ICON_PATH,
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -31,189 +189,200 @@ function createWindow() {
     }
   });
 
-  // ???섏씠吏 濡쒕뱶
   mainWindow.loadFile('index.html');
-  
-  // 媛쒕컻 ?섍꼍?먯꽌留?媛쒕컻?????닿린
+
   if (process.argv.includes('--dev')) {
     mainWindow.webContents.openDevTools();
   }
 
-  // 李??ㅼ젙 ???濡쒕뱶
   loadWindowSettings();
-  
-  // 李??ロ옄 ???ㅼ젙 ???
-  mainWindow.on('close', (event) => {
-    // 移좏뙋 ?곗씠??????붿껌
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('save-before-quit');
-    }
+  createTray();
+
+  mainWindow.on('close', () => {
     saveWindowSettings();
   });
-  
-  // ?쒖뒪???몃젅???ㅼ젙
-  createTray();
+
+  mainWindow.on('move', saveWindowSettings);
+  mainWindow.on('resize', saveWindowSettings);
 }
 
-// ?깆씠 以鍮꾨릺硫??덈룄???앹꽦
+function requestSaveBeforeQuit(timeoutMs = 3000) {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return Promise.resolve();
+  }
+
+  return new Promise((resolve) => {
+    let settled = false;
+
+    const finalize = () => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timeoutId);
+      ipcMain.removeListener('save-before-quit-done', onDone);
+      resolve();
+    };
+
+    const onDone = () => {
+      finalize();
+    };
+
+    const timeoutId = setTimeout(finalize, timeoutMs);
+
+    ipcMain.once('save-before-quit-done', onDone);
+
+    try {
+      mainWindow.webContents.send('save-before-quit');
+    } catch (error) {
+      console.error('Failed to request renderer save before quit:', error);
+      finalize();
+    }
+  });
+}
+
+function createTray() {
+  if (tray) {
+    return;
+  }
+
+  try {
+    const trayIcon = fs.existsSync(ICON_PATH)
+      ? nativeImage.createFromPath(ICON_PATH)
+      : nativeImage.createEmpty();
+
+    tray = new Tray(trayIcon);
+    tray.setToolTip('화면 칠판');
+
+    const contextMenu = Menu.buildFromTemplate([
+      {
+        label: '칠판 표시',
+        click: () => {
+          if (!mainWindow) {
+            return;
+          }
+          mainWindow.show();
+          mainWindow.focus();
+        }
+      },
+      { type: 'separator' },
+      {
+        label: '종료',
+        click: () => {
+          app.quit();
+        }
+      }
+    ]);
+
+    tray.setContextMenu(contextMenu);
+
+    tray.on('click', () => {
+      if (!mainWindow) {
+        return;
+      }
+
+      if (mainWindow.isVisible()) {
+        mainWindow.hide();
+      } else {
+        mainWindow.show();
+        mainWindow.focus();
+      }
+    });
+  } catch (error) {
+    console.error('Failed to create tray:', error);
+  }
+}
+
 app.on('ready', () => {
+  initSessionState();
   createWindow();
 
-  // ?먮룞 ?ㅽ뻾 ?ㅼ젙 (?⑦궎吏뺣맂 ?깆뿉?쒕쭔)
-  if (app.isPackaged) { 
+  if (app.isPackaged) {
     app.setLoginItemSettings({
       openAtLogin: true,
-      path: process.execPath, // ?꾩옱 ?ㅽ뻾 ?뚯씪 寃쎈줈 ?ъ슜
+      path: process.execPath,
       args: []
     });
   }
 
-  app.on('activate', function () {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+  app.on('activate', () => {
+    if (BrowserWindow.getAllWindows().length === 0) {
+      createWindow();
+    }
   });
 });
 
-// ??醫낅즺 ???곗씠?????
 app.on('before-quit', async (event) => {
-  console.log('?봽 ??醫낅즺 ???곗씠??????쒖옉');
+  if (isQuitting) {
+    return;
+  }
 
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    event.preventDefault();
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    markSessionClosed();
+    return;
+  }
 
-    try {
-      // ?뚮뜑?ъ뿉 ????붿껌
-      mainWindow.webContents.send('save-before-quit');
+  event.preventDefault();
 
-      // ????꾨즺源뚯? ?좎떆 ?湲?
-      await new Promise(resolve => setTimeout(resolve, 500));
+  try {
+    await requestSaveBeforeQuit();
+  } catch (error) {
+    console.error('Save-before-quit failed:', error);
+  }
 
-      console.log('????醫낅즺 ???곗씠??????꾨즺');
-    } catch (error) {
-      console.error('????醫낅즺 ??????ㅻ쪟:', error);
-    }
+  saveWindowSettings();
+  markSessionClosed();
+  isQuitting = true;
+  app.quit();
+});
 
-    // ?ㅼ젣 醫낅즺
-    app.exit(0);
+app.on('will-quit', () => {
+  markSessionClosed();
+});
+
+app.on('window-all-closed', () => {
+  if (process.platform !== 'darwin') {
+    app.quit();
   }
 });
 
-// 紐⑤뱺 李쎌씠 ?ロ엳硫???醫낅즺 (macOS ?쒖쇅)
-app.on('window-all-closed', function () {
-  if (process.platform !== 'darwin') app.quit();
-});
-
-// 李??ㅼ젙 ???
-function saveWindowSettings() {
-  if (!mainWindow) return;
-  
-  const bounds = mainWindow.getBounds();
-  const isAlwaysOnTop = mainWindow.isAlwaysOnTop();
-  
-  const data = {
-    bounds,
-    isAlwaysOnTop
-  };
-  
-  try {
-    fs.writeFileSync(USER_DATA_PATH, JSON.stringify(data));
-  } catch (error) {
-    console.error('Failed to save window settings:', error);
-  }
-}
-
-// 李??ㅼ젙 濡쒕뱶
-function loadWindowSettings() {
-  try {
-    if (fs.existsSync(USER_DATA_PATH)) {
-      const data = JSON.parse(fs.readFileSync(USER_DATA_PATH));
-      
-      if (data.bounds) {
-        mainWindow.setBounds(data.bounds);
-      }
-      
-      // Always-on-top ?곹깭 蹂듭썝
-      if (typeof data.isAlwaysOnTop === 'boolean') {
-        mainWindow.setAlwaysOnTop(data.isAlwaysOnTop);
-      }
-    }
-  } catch (error) {
-    console.error('Failed to load window settings:', error);
-  }
-}
-
-// ?쒖뒪???몃젅???앹꽦 ?⑥닔
-function createTray() {
-  // ?몃젅???꾩씠肄섏씠 ?대? ?덉쑝硫??덈줈 ?앹꽦?섏? ?딆쓬
-  if (tray) return;
-  
-  try {
-    // ?꾩씠肄??앹꽦 (?뚯씪???놁쑝硫?湲곕낯 ?꾩씠肄??ъ슜)
-    let trayIcon;
-    try {
-      if (fs.existsSync(ICON_PATH)) {
-        trayIcon = nativeImage.createFromPath(ICON_PATH);
-      } else {
-        // 湲곕낯 ?꾩씠肄??ъ슜 (Electron 湲곕낯 ?꾩씠肄?
-        console.log('?꾩씠肄??뚯씪??李얠쓣 ???놁뼱 湲곕낯 ?꾩씠肄섏쓣 ?ъ슜?⑸땲??');
-      }
-    } catch (error) {
-      console.error('?꾩씠肄?濡쒕뱶 ?ㅻ쪟:', error);
-    }
-    
-    // ?몃젅???앹꽦
-    tray = new Tray(trayIcon || nativeImage.createEmpty());
-    tray.setToolTip('?붾㈃ 移좏뙋');
-    
-    // ?몃젅??硫붾돱 ?ㅼ젙
-    const contextMenu = Menu.buildFromTemplate([
-      { 
-        label: '移좏뙋 ?쒖떆', 
-        click: () => {
-          if (mainWindow) {
-            mainWindow.show();
-            mainWindow.focus();
-          }
-        } 
-      },
-      { type: 'separator' },
-      { 
-        label: '醫낅즺', 
-        click: () => {
-          app.quit();
-        } 
-      }
-    ]);
-    
-    tray.setContextMenu(contextMenu);
-    
-    // ?몃젅???꾩씠肄??대┃ ???덈룄???쒖떆/?④? ?좉?
-    tray.on('click', () => {
-      if (mainWindow) {
-        if (mainWindow.isVisible()) {
-          mainWindow.hide();
-        } else {
-          mainWindow.show();
-          mainWindow.focus();
-        }
-      }
-    });
-  } catch (error) {
-    console.error('?몃젅???앹꽦 ?ㅻ쪟:', error);
-  }
-}
-
-// IPC ?대깽??泥섎━
 ipcMain.on('set-always-on-top', (event, value) => {
-  if (mainWindow) {
-    mainWindow.setAlwaysOnTop(value);
-    console.log('Always on top set to:', value);
-    
-    // 利됱떆 ?ㅼ젙 ???
-    saveWindowSettings();
+  if (!mainWindow) {
+    return;
   }
+
+  mainWindow.setAlwaysOnTop(Boolean(value));
+  saveWindowSettings();
 });
 
-// 湲곕낯 李?而⑦듃濡?湲곕뒫
+ipcMain.handle('get-window-state', () => {
+  if (!mainWindow) {
+    return { isAlwaysOnTop: false };
+  }
+
+  return {
+    isAlwaysOnTop: mainWindow.isAlwaysOnTop()
+  };
+});
+
+ipcMain.handle('get-startup-state', () => {
+  return startupState;
+});
+
+ipcMain.handle('get-displays', () => {
+  return screen.getAllDisplays().map((display) => ({
+    id: String(display.id),
+    label: display.label || `Display ${display.id}`,
+    bounds: display.bounds,
+    workArea: display.workArea,
+    scaleFactor: display.scaleFactor
+  }));
+});
+
+ipcMain.handle('move-window-to-display', (event, displayId) => {
+  return moveWindowToDisplay(displayId);
+});
+
 ipcMain.on('minimize-window', () => {
   if (mainWindow) {
     mainWindow.minimize();
@@ -221,12 +390,14 @@ ipcMain.on('minimize-window', () => {
 });
 
 ipcMain.on('maximize-window', () => {
-  if (mainWindow) {
-    if (mainWindow.isMaximized()) {
-      mainWindow.unmaximize();
-    } else {
-      mainWindow.maximize();
-    }
+  if (!mainWindow) {
+    return;
+  }
+
+  if (mainWindow.isMaximized()) {
+    mainWindow.unmaximize();
+  } else {
+    mainWindow.maximize();
   }
 });
 
@@ -234,47 +405,34 @@ ipcMain.on('close-window', () => {
   app.quit();
 });
 
-// ?곗씠?????諛?濡쒕뱶 IPC ?몃뱾??
 ipcMain.handle('save-data', (event, key, data) => {
+  const filePath = DATA_FILE_MAP[key];
+  if (!filePath) {
+    return false;
+  }
+
   try {
-    let filePath;
-    if (key === 'chalkboard-data') {
-      filePath = CHALKBOARD_DATA_PATH;
-    } else if (key === 'timetable-data') {
-      filePath = TIMETABLE_DATA_PATH;
-    } else {
-      return false;
-    }
-    
-    fs.writeFileSync(filePath, data);
-    console.log(`???곗씠??????깃났: ${key}`);
+    fs.writeFileSync(filePath, data, 'utf-8');
     return true;
   } catch (error) {
-    console.error(`???곗씠??????ㅽ뙣: ${key}`, error);
+    console.error(`Failed to save data: ${key}`, error);
     return false;
   }
 });
 
 ipcMain.handle('load-data', (event, key) => {
+  const filePath = DATA_FILE_MAP[key];
+  if (!filePath) {
+    return null;
+  }
+
   try {
-    let filePath;
-    if (key === 'chalkboard-data') {
-      filePath = CHALKBOARD_DATA_PATH;
-    } else if (key === 'timetable-data') {
-      filePath = TIMETABLE_DATA_PATH;
-    } else {
+    if (!fs.existsSync(filePath)) {
       return null;
     }
-    
-    if (fs.existsSync(filePath)) {
-      const data = fs.readFileSync(filePath, 'utf-8');
-      console.log(`???곗씠??濡쒕뱶 ?깃났: ${key}`);
-      return data;
-    }
-    return null;
+    return fs.readFileSync(filePath, 'utf-8');
   } catch (error) {
-    console.error(`???곗씠??濡쒕뱶 ?ㅽ뙣: ${key}`, error);
+    console.error(`Failed to load data: ${key}`, error);
     return null;
   }
 });
-

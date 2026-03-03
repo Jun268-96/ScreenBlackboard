@@ -10,7 +10,7 @@
   border-left: 1px solid #444;
   transition: right 0.3s ease;
   z-index: 1000;
-  overflow-y: auto;
+  overflow: hidden;
 }
 
 .sidebar.open {
@@ -59,29 +59,45 @@
 
 /* Timetable */
 .timetable-container {
-  padding: 30px;
+  --period-scale: 1;
+  --period-gap: 16px;
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 22px;
 }
 
 .timetable-header {
   color: #fff;
-  font-size: 36px !important;
+  font-size: clamp(20px, calc(36px * var(--period-scale)), 36px) !important;
   font-weight: bold;
-  margin-bottom: 40px;
-  padding-bottom: 20px;
+  margin-bottom: calc(16px * var(--period-scale));
+  padding-bottom: calc(10px * var(--period-scale));
   border-bottom: 2px solid #444;
   line-height: 1.2;
+  flex: 0 0 auto;
+}
+
+#timetableList {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--period-gap);
+  overflow: hidden;
 }
 
 .timetable-item {
   display: flex;
   align-items: center;
-  padding: 24px;
-  margin-bottom: 16px;
+  padding: calc(10px * var(--period-scale)) calc(12px * var(--period-scale));
   background-color: #2a2a2a;
   border-radius: 12px;
   transition: background-color 0.2s ease;
-  min-height: 100px;
-  gap: 20px;
+  min-height: 0;
+  flex: 1 1 0;
+  gap: calc(10px * var(--period-scale));
 }
 
 .timetable-item:hover {
@@ -90,9 +106,9 @@
 
 .timetable-number {
   color: #5a9fd4;
-  font-size: 60px !important;
+  font-size: clamp(16px, calc(52px * var(--period-scale)), 60px) !important;
   font-weight: bold;
-  width: 80px;
+  width: calc(48px + 28px * var(--period-scale));
   text-align: center;
   flex-shrink: 0;
   line-height: 1;
@@ -100,17 +116,18 @@
 
 .timetable-subject {
   flex: 1;
-  max-width: calc(100% - 180px);
+  min-width: 0;
+  max-width: none;
   color: #fff;
-  font-size: 48px !important;
+  font-size: clamp(14px, calc(42px * var(--period-scale)), 48px) !important;
   background: transparent;
   border: none;
   outline: none;
   cursor: text;
-  padding: 0.3em 20px;
+  padding: 0 calc(8px * var(--period-scale));
   border-radius: 8px;
   transition: background-color 0.2s ease;
-  line-height: 1.2;
+  line-height: 1.1;
   font-family: inherit;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -126,32 +143,33 @@
 }
 
 .timetable-checkbox {
-  width: 40px !important;
-  height: 40px !important;
-  min-width: 40px;
+  width: clamp(16px, calc(30px * var(--period-scale)), 40px) !important;
+  height: clamp(16px, calc(30px * var(--period-scale)), 40px) !important;
+  min-width: clamp(16px, calc(30px * var(--period-scale)), 40px);
   accent-color: #5a9fd4;
   cursor: pointer;
-  transform: scale(1.5) !important;
+  transform: none !important;
   flex-shrink: 0;
 }
 
 .timetable-actions {
-  margin-top: 40px;
+  margin-top: calc(12px * var(--period-scale));
   display: flex;
-  gap: 20px;
+  gap: calc(10px * var(--period-scale));
+  flex: 0 0 auto;
 }
 
 .timetable-btn {
-  padding: 16px 32px;
+  padding: calc(8px * var(--period-scale)) calc(12px * var(--period-scale));
   background-color: #3a3a3a;
   color: #fff;
   border: 2px solid #555;
   border-radius: 10px;
   cursor: pointer;
-  font-size: 24px !important;
+  font-size: clamp(12px, calc(21px * var(--period-scale)), 24px) !important;
   transition: all 0.2s ease;
   font-weight: 500;
-  line-height: 1.5;
+  line-height: 1.2;
 }
 
 .timetable-btn:hover {
@@ -202,11 +220,7 @@
     margin-right: 400px;
   }
   
-  .timetable-subject {
-    font-size: 36px !important;
-  }
-  
-  .timetable-number {
-    font-size: 48px !important;
+  .timetable-container {
+    padding: 16px;
   }
 }

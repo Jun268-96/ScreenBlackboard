@@ -13,6 +13,20 @@
       <button id="addTabButton" class="add-tab-btn" title="새 칠판 추가">+</button>
       <button id="saveButton" class="save-btn" title="수동 저장">저장</button>
     </div>
+
+    <div class="title-quick-actions">
+      <button id="lockModeButton" title="편집 잠금 (Ctrl+L)">잠금</button>
+      <button id="freezeModeButton" title="판서 일시 정지 (Ctrl+Shift+F)">Freeze</button>
+      <button id="spotlightButton" title="스포트라이트 (Ctrl+Shift+S)">조명</button>
+      <button id="maskButton" title="가림막 (Ctrl+Shift+M)">가림</button>
+      <button id="splitButton" title="A/B 분할 보기 (Ctrl+Shift+V)">A/B</button>
+      <button id="snapshotButton" title="스냅샷 타임라인">스냅샷</button>
+      <button id="settingsButton" title="설정">설정</button>
+      <span id="globalContrastWarning" class="global-contrast-warning hidden">대비 낮음</span>
+    </div>
+
+    <div class="drag-region" aria-hidden="true"></div>
+
     <div class="window-controls">
       <button id="alwaysOnTopButton" title="항상 위에">
         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
@@ -41,6 +55,7 @@
   <div id="tabContents"></div>
 
   <div id="sidebar" class="sidebar">
+    <div id="sidebarResizer" class="sidebar-resizer" title="시간표 너비 조절"></div>
     <div class="timetable-container">
       <h2 class="timetable-header">오늘의 시간표</h2>
       <div id="timetableList"></div>
@@ -53,6 +68,75 @@
   <button id="sidebarToggle" class="sidebar-toggle" onclick="toggleSidebar()">
     <span class="sidebar-arrow"></span>
   </button>
+
+  <aside id="settingsPanel" class="settings-panel hidden">
+    <div class="panel-header">
+      <h3>칠판 설정</h3>
+      <button id="closeSettingsPanelButton" class="panel-close-btn">닫기</button>
+    </div>
+
+    <div class="panel-section">
+      <h4>모니터</h4>
+      <select id="monitorSelect"></select>
+      <button id="moveMonitorButton" class="panel-action-btn">선택 모니터로 이동</button>
+    </div>
+
+    <div class="panel-section">
+      <h4>프리셋</h4>
+      <select id="presetSelect">
+        <option value="standard">표준 교실</option>
+        <option value="low-spec">저사양 PC</option>
+        <option value="projector">대형 프로젝터</option>
+      </select>
+      <button id="applyPresetButton" class="panel-action-btn">프리셋 적용</button>
+    </div>
+
+    <div class="panel-section">
+      <h4>표시/입력</h4>
+      <label class="panel-checkbox">
+        <input type="checkbox" id="highContrastToggle">
+        프로젝터 고대비 테마
+      </label>
+      <label class="panel-checkbox">
+        <input type="checkbox" id="safePaletteToggle">
+        색약 안전 팔레트
+      </label>
+      <label class="panel-checkbox">
+        <input type="checkbox" id="lowLatencyToggle">
+        입력 지연 최소화 모드
+      </label>
+      <label class="panel-checkbox">
+        <input type="checkbox" id="touchOptimizeToggle">
+        터치/펜 최적화
+      </label>
+    </div>
+
+    <div class="panel-section">
+      <h4>발표 오버레이</h4>
+      <label for="spotlightRadiusInput">스포트라이트 반경</label>
+      <input id="spotlightRadiusInput" type="range" min="90" max="360" step="10" value="180">
+      <label for="maskRevealInput">가림막 불투명도</label>
+      <input id="maskRevealInput" type="range" min="10" max="100" step="5" value="60">
+    </div>
+
+    <div class="panel-section">
+      <h4>A/B 분할</h4>
+      <label class="panel-checkbox">
+        <input type="checkbox" id="splitModeToggle">
+        분할 보기 사용
+      </label>
+      <select id="splitTargetSelect"></select>
+    </div>
+  </aside>
+
+  <aside id="snapshotPanel" class="snapshot-panel hidden">
+    <div class="panel-header">
+      <h3>스냅샷 타임라인</h3>
+      <button id="closeSnapshotPanelButton" class="panel-close-btn">닫기</button>
+    </div>
+    <button id="createSnapshotButton" class="panel-action-btn">지금 스냅샷 생성</button>
+    <div id="snapshotList" class="snapshot-list"></div>
+  </aside>
 
   <script src="./src/text-formatter.js"></script>
   <script src="./src/renderer.js"></script>
