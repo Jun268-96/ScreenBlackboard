@@ -91,6 +91,21 @@ body.theme-high-contrast {
   row-gap: 0.6rem;
 }
 
+.toolbar.canvas-toolbar {
+  gap: 0.55rem;
+}
+
+.toolbar.canvas-toolbar .toolbar-group,
+.toolbar.canvas-toolbar .color-picker-container,
+.toolbar.canvas-toolbar .font-size-control,
+.toolbar.canvas-toolbar .background-controls,
+.toolbar.canvas-toolbar .math-button,
+.toolbar.canvas-toolbar .math-symbol-panel,
+.toolbar.canvas-toolbar .contrast-indicator,
+.toolbar.canvas-toolbar .divider {
+  display: none !important;
+}
+
 .draw-controls,
 .background-controls {
   display: flex;
@@ -102,6 +117,34 @@ body.theme-high-contrast {
   display: flex;
   align-items: center;
   gap: 0.35rem;
+}
+
+.canvas-tool-palette {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  flex-wrap: wrap;
+}
+
+.toolbar.canvas-toolbar .draw-tool-select {
+  display: none;
+}
+
+.canvas-palette-btn {
+  width: auto !important;
+  min-width: 52px;
+  height: 30px !important;
+  padding: 0 0.45rem !important;
+  font-size: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.18) !important;
+  border-radius: 6px !important;
+  background: rgba(255, 255, 255, 0.06) !important;
+}
+
+.canvas-palette-btn.active {
+  color: #ffffff !important;
+  border-color: rgba(77, 148, 255, 0.8) !important;
+  background: rgba(77, 148, 255, 0.35) !important;
 }
 
 .canvas-tool-btn {
@@ -117,6 +160,11 @@ body.theme-high-contrast {
 
 .canvas-tool-btn:hover {
   background: rgba(255, 255, 255, 0.12) !important;
+}
+
+.canvas-clear-btn {
+  border-color: rgba(239, 68, 68, 0.6) !important;
+  background: rgba(239, 68, 68, 0.2) !important;
 }
 
 .draw-tool-select,
@@ -262,7 +310,15 @@ body.theme-high-contrast {
 .drawing-canvas {
   position: absolute;
   inset: 0;
-  z-index: 4;
+  z-index: 7;
+  pointer-events: none;
+  touch-action: none;
+}
+
+.laser-canvas {
+  position: absolute;
+  inset: 0;
+  z-index: 9;
   pointer-events: none;
   touch-action: none;
 }
@@ -270,7 +326,7 @@ body.theme-high-contrast {
 .mask-overlay {
   position: absolute;
   inset: 0;
-  z-index: 8;
+  z-index: 12;
   pointer-events: none;
 }
 
@@ -286,7 +342,7 @@ body.theme-high-contrast {
 .canvas-object-layer {
   position: absolute;
   inset: 0;
-  z-index: 3;
+  z-index: 6;
   pointer-events: none;
 }
 
@@ -306,6 +362,10 @@ body.theme-high-contrast {
 
 .canvas-object.dragging {
   opacity: 0.9;
+}
+
+.canvas-object.resizing {
+  opacity: 0.92;
 }
 
 .canvas-object-handle {
@@ -334,6 +394,29 @@ body.theme-high-contrast {
   padding: 0 !important;
   border: 1px solid rgba(255, 255, 255, 0.25) !important;
   background: rgba(239, 68, 68, 0.2) !important;
+}
+
+.canvas-object-remove:hover {
+  cursor: pointer;
+}
+
+.canvas-object-resize {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  width: 16px !important;
+  height: 16px !important;
+  min-width: 16px !important;
+  border-radius: 4px !important;
+  border: 1px solid rgba(255, 255, 255, 0.28) !important;
+  background:
+    linear-gradient(135deg, transparent 35%, rgba(255, 255, 255, 0.75) 35%, rgba(255, 255, 255, 0.75) 45%, transparent 45%, transparent 55%, rgba(255, 255, 255, 0.75) 55%, rgba(255, 255, 255, 0.75) 65%, transparent 65%) !important;
+  cursor: nwse-resize !important;
+  padding: 0 !important;
+}
+
+.canvas-object-resize:hover {
+  border-color: rgba(77, 148, 255, 0.8) !important;
 }
 
 .canvas-object-body {
@@ -392,6 +475,34 @@ body.theme-high-contrast {
     linear-gradient(rgba(59, 130, 246, 0.4) 2px, transparent 2px),
     linear-gradient(90deg, rgba(59, 130, 246, 0.4) 2px, transparent 2px);
   background-size: 32px 32px, 32px 32px, 160px 160px, 160px 160px;
+}
+
+.board-stage.canvas-whiteboard {
+  background: #ffffff;
+}
+
+.tab-content.canvas-tab .chalkboard {
+  display: none;
+}
+
+.board-stage.canvas-whiteboard .canvas-object {
+  border-color: rgba(17, 24, 39, 0.28);
+  background: rgba(255, 255, 255, 0.93);
+  box-shadow: 0 10px 22px rgba(15, 23, 42, 0.16);
+}
+
+.board-stage.canvas-whiteboard .canvas-object-handle {
+  background: rgba(17, 24, 39, 0.9);
+  color: #f8fafc;
+  border-bottom-color: rgba(148, 163, 184, 0.35);
+}
+
+.board-stage.canvas-whiteboard .canvas-object-body {
+  background: #ffffff;
+}
+
+.board-stage.canvas-whiteboard .canvas-text-content {
+  color: #111827;
 }
 
 .chalk-image {

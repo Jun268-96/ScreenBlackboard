@@ -43,6 +43,7 @@ const AUTO_SAVE_INTERVAL = 20000;
 const AUTO_SNAPSHOT_INTERVAL = 120000;
 const LOW_LATENCY_SNAPSHOT_INTERVAL = 300000;
 const SNAPSHOT_LIMIT = 30;
+const LASER_FADE_MS = 3000;
 const FONT_SIZE_STEPS = [8, 10, 12, 14, 16, 18, 20, 24, 28, 32, 36, 42, 48, 56, 64, 72, 84, 96, 112, 128, 144, 160, 180, 200];
 
 let tabs = new Map();
@@ -63,6 +64,7 @@ let activePanState = null;
 let touchPointers = new Map();
 let penPointers = new Set();
 let drawingStates = new Map();
+let laserStates = new Map();
 let startupRecoveryFinished = false;
 let hasUnsavedChanges = false;
 
@@ -146,6 +148,7 @@ function getTabDom(tabId) {
     transform: document.querySelector(`.board-transform[data-tab-id="${tabId}"]`),
     chalkboard: document.querySelector(`.chalkboard[data-tab-id="${tabId}"]`),
     canvas: document.querySelector(`.drawing-canvas[data-tab-id="${tabId}"]`),
+    laserCanvas: document.querySelector(`.laser-canvas[data-tab-id="${tabId}"]`),
     objectLayer: document.querySelector(`.canvas-object-layer[data-tab-id="${tabId}"]`),
     maskOverlay: document.querySelector(`.mask-overlay[data-tab-id="${tabId}"]`)
   };
@@ -275,6 +278,7 @@ function createCanvasObjectElement(item) {
       <button type="button" class="canvas-object-remove" title="삭제">&times;</button>
     </div>
     <div class="canvas-object-body"></div>
+    <button type="button" class="canvas-object-resize" title="크기 조절"></button>
   `;
 
   const body = object.querySelector('.canvas-object-body');
@@ -402,6 +406,89 @@ function addCanvasTextBox(tabId) {
   });
 }
 
+function clearCanvasTabContent(tabId) {
+  if (!isCanvasTab(tabId)) {
+    return;
+  }
+
+  const tabData = tabs.get(tabId);
+  const dom = getTabDom(tabId);
+  if (!tabData || !dom.canvas) {
+    return;
+  }
+
+  const ctx = dom.canvas.getContext('2d');
+  if (ctx) {
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, dom.canvas.width, dom.canvas.height);
+    const dpr = window.devicePixelRatio || 1;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+
+  const laserState = laserStates.get(tabId);
+  if (laserState) {
+    laserState.segments = [];
+    laserState.isDrawing = false;
+    laserState.pointerId = null;
+    laserState.lastPoint = null;
+    if (laserState.rafId) {
+      cancelAnimationFrame(laserState.rafId);
+      laserState.rafId = null;
+    }
+  }
+  if (dom.laserCanvas) {
+    const laserCtx = dom.laserCanvas.getContext('2d');
+    laserCtx?.clearRect(0, 0, dom.laserCanvas.width, dom.laserCanvas.height);
+  }
+
+  tabData.drawingData = null;
+  tabData.canvasItems = [];
+  if (dom.objectLayer) {
+    dom.objectLayer.innerHTML = '';
+  }
+  if (dom.chalkboard) {
+    dom.chalkboard.innerHTML = '';
+  }
+  markDirty();
+}
+
+function handleCanvasClipboardPayload(tabId, clipboardData) {
+  if (!isCanvasTab(tabId) || !clipboardData) {
+    return false;
+  }
+
+  const items = [...(clipboardData.items || [])];
+  const imageItem = items.find((item) => item.type.startsWith('image/'));
+  if (!imageItem) {
+    return false;
+  }
+
+  const file = imageItem.getAsFile();
+  if (!file) {
+    return false;
+  }
+
+  const reader = new FileReader();
+  reader.onload = () => {
+    addCanvasImageFromData(tabId, reader.result);
+  };
+  reader.readAsDataURL(file);
+  return true;
+}
+
+function setActiveTool(tool, options = {}) {
+  if (!tool) {
+    return;
+  }
+
+  appSettings.activeTool = tool;
+  syncDrawControls();
+  applyAllInteractionStates();
+  if (options.markDirty !== false) {
+    markDirty();
+  }
+}
+
 function setupCanvasObjectLayerHandlers(tabId) {
   const dom = getTabDom(tabId);
   if (!dom.objectLayer || dom.objectLayer.dataset.bound === 'true') {
@@ -435,26 +522,51 @@ function setupCanvasObjectLayerHandlers(tabId) {
       return;
     }
 
-    const handle = event.target.closest('.canvas-object-handle');
-    if (!handle) {
+    if (event.target.closest('.canvas-object-remove')) {
+      event.stopPropagation();
       return;
     }
-    const object = handle.closest('.canvas-object');
+
+    if (event.target.closest('.canvas-text-content')) {
+      return;
+    }
+
+    const resizeHandle = event.target.closest('.canvas-object-resize');
+    const handle = event.target.closest('.canvas-object-handle');
+    if (!handle && !resizeHandle) {
+      return;
+    }
+    const object = (handle || resizeHandle).closest('.canvas-object');
     if (!object) {
       return;
     }
 
     const stageRect = dom.stage.getBoundingClientRect();
     const objectRect = object.getBoundingClientRect();
-    dragState = {
-      pointerId: event.pointerId,
-      object,
-      stageRect,
-      offsetX: event.clientX - objectRect.left,
-      offsetY: event.clientY - objectRect.top
-    };
+    if (resizeHandle) {
+      dragState = {
+        mode: 'resize',
+        pointerId: event.pointerId,
+        object,
+        stageRect,
+        startX: event.clientX,
+        startY: event.clientY,
+        startWidth: objectRect.width,
+        startHeight: objectRect.height
+      };
+      object.classList.add('resizing');
+    } else {
+      dragState = {
+        mode: 'move',
+        pointerId: event.pointerId,
+        object,
+        stageRect,
+        offsetX: event.clientX - objectRect.left,
+        offsetY: event.clientY - objectRect.top
+      };
+      object.classList.add('dragging');
+    }
 
-    object.classList.add('dragging');
     dom.objectLayer.setPointerCapture(event.pointerId);
     event.preventDefault();
     event.stopPropagation();
@@ -465,12 +577,23 @@ function setupCanvasObjectLayerHandlers(tabId) {
       return;
     }
 
-    const maxX = Math.max(0, dragState.stageRect.width - dragState.object.offsetWidth);
-    const maxY = Math.max(0, dragState.stageRect.height - dragState.object.offsetHeight);
-    const x = clamp(event.clientX - dragState.stageRect.left - dragState.offsetX, 0, maxX);
-    const y = clamp(event.clientY - dragState.stageRect.top - dragState.offsetY, 0, maxY);
-    dragState.object.style.left = `${Math.round(x)}px`;
-    dragState.object.style.top = `${Math.round(y)}px`;
+    if (dragState.mode === 'resize') {
+      const left = parseFloat(dragState.object.style.left) || 0;
+      const top = parseFloat(dragState.object.style.top) || 0;
+      const maxWidth = Math.max(140, dragState.stageRect.width - left);
+      const maxHeight = Math.max(100, dragState.stageRect.height - top);
+      const nextWidth = clamp(dragState.startWidth + (event.clientX - dragState.startX), 140, maxWidth);
+      const nextHeight = clamp(dragState.startHeight + (event.clientY - dragState.startY), 100, maxHeight);
+      dragState.object.style.width = `${Math.round(nextWidth)}px`;
+      dragState.object.style.height = `${Math.round(nextHeight)}px`;
+    } else {
+      const maxX = Math.max(0, dragState.stageRect.width - dragState.object.offsetWidth);
+      const maxY = Math.max(0, dragState.stageRect.height - dragState.object.offsetHeight);
+      const x = clamp(event.clientX - dragState.stageRect.left - dragState.offsetX, 0, maxX);
+      const y = clamp(event.clientY - dragState.stageRect.top - dragState.offsetY, 0, maxY);
+      dragState.object.style.left = `${Math.round(x)}px`;
+      dragState.object.style.top = `${Math.round(y)}px`;
+    }
     markDirty(false);
     event.preventDefault();
   });
@@ -481,6 +604,7 @@ function setupCanvasObjectLayerHandlers(tabId) {
     }
 
     dragState.object.classList.remove('dragging');
+    dragState.object.classList.remove('resizing');
     try {
       dom.objectLayer.releasePointerCapture(event.pointerId);
     } catch (error) {
@@ -1429,10 +1553,10 @@ function createTabContent(tabId) {
   const isCanvas = tabData?.kind === 'canvas';
   const tabContents = document.getElementById('tabContents');
   const contentElement = document.createElement('div');
-  contentElement.className = 'tab-content';
+  contentElement.className = `tab-content ${isCanvas ? 'canvas-tab' : ''}`;
   contentElement.dataset.tabId = tabId;
   contentElement.innerHTML = `
-    <div class="toolbar" data-tab-id="${tabId}">
+    <div class="toolbar ${isCanvas ? 'canvas-toolbar' : ''}" data-tab-id="${tabId}">
       <div class="toolbar-group">
         <button id="boldBtn" class="format-btn" title="굵게 (Ctrl+B)">B</button>
         <button id="italicBtn" class="format-btn" title="기울임 (Ctrl+I)">I</button>
@@ -1492,9 +1616,23 @@ function createTabContent(tabId) {
       <div class="divider"></div>
 
       <div class="draw-controls">
+        ${isCanvas ? `
+        <div class="canvas-tool-palette">
+          <button class="canvas-palette-btn" data-tool="pen" title="펜">펜</button>
+          <button class="canvas-palette-btn" data-tool="laser" title="레이저 포인터">레이저</button>
+          <button class="canvas-palette-btn" data-tool="highlighter" title="형광펜">형광</button>
+          <button class="canvas-palette-btn" data-tool="eraser" title="지우개">지우개</button>
+          <button class="canvas-palette-btn" data-tool="line" title="직선">직선</button>
+          <button class="canvas-palette-btn" data-tool="arrow" title="화살표">화살표</button>
+          <button class="canvas-palette-btn" data-tool="rect" title="사각형">사각형</button>
+          <button class="canvas-palette-btn" data-tool="circle" title="원">원</button>
+          <button class="canvas-palette-btn" data-tool="pan" title="이동/줌">이동</button>
+        </div>
+        ` : ''}
         <select class="draw-tool-select" title="도구">
           <option value="text">텍스트</option>
           <option value="pen">펜</option>
+          <option value="laser">레이저</option>
           <option value="highlighter">형광펜</option>
           <option value="eraser">지우개</option>
           <option value="line">직선</option>
@@ -1525,6 +1663,7 @@ function createTabContent(tabId) {
         <button class="canvas-tool-btn canvas-add-image-btn" title="이미지 붙여넣기/파일 추가">이미지</button>
         <button class="canvas-tool-btn canvas-add-video-btn" title="영상 URL 추가">영상</button>
         <button class="canvas-tool-btn canvas-add-text-btn" title="드래그 가능한 텍스트 박스 추가">텍스트박스</button>
+        <button class="canvas-tool-btn canvas-clear-btn" title="캔버스 전체 지우기">전체지우기</button>
         <input type="file" class="canvas-image-input hidden-color-picker" accept="image/*">
       </div>
       ` : ''}
@@ -1551,14 +1690,15 @@ function createTabContent(tabId) {
         <div class="chalkboard" contenteditable="true" data-tab-id="${tabId}"></div>
         ${isCanvas ? `<div class="canvas-object-layer" data-tab-id="${tabId}"></div>` : ''}
         <canvas class="drawing-canvas" data-tab-id="${tabId}"></canvas>
+        <canvas class="laser-canvas" data-tab-id="${tabId}"></canvas>
         <div class="mask-overlay" data-tab-id="${tabId}"></div>
       </div>
     </div>
   `;
 
   tabContents.appendChild(contentElement);
-  setupTabEventListeners(tabId);
   initializeCanvas(tabId);
+  setupTabEventListeners(tabId);
   setupCanvasObjectLayerHandlers(tabId);
   loadTabContent(tabId);
   applyTabBackground(tabId);
@@ -1572,7 +1712,24 @@ function switchToTab(tabId) {
     return;
   }
 
+  const targetTab = tabs.get(tabId);
   activeTabId = tabId;
+
+  if (targetTab?.kind === 'canvas') {
+    if (appSettings.drawColor.toLowerCase() === '#ffffff') {
+      appSettings.drawColor = '#111111';
+    }
+    if (appSettings.activeTool === 'text') {
+      setActiveTool('pen', { markDirty: false });
+    } else {
+      syncDrawControls();
+      applyAllInteractionStates();
+    }
+  } else {
+    syncDrawControls();
+    applyAllInteractionStates();
+  }
+
   document.querySelectorAll('.tab').forEach((tabElement) => {
     tabElement.classList.toggle('active', tabElement.dataset.tabId === tabId);
   });
@@ -1654,7 +1811,11 @@ function applyTabBackground(tabId) {
     return;
   }
 
-  dom.stage.classList.remove('background-plain', 'background-lined', 'background-grid', 'background-coordinate');
+  dom.stage.classList.remove('background-plain', 'background-lined', 'background-grid', 'background-coordinate', 'canvas-whiteboard');
+  if (tabData.kind === 'canvas') {
+    dom.stage.classList.add('canvas-whiteboard');
+    return;
+  }
   dom.stage.classList.add(`background-${tabData.backgroundPreset || 'plain'}`);
 }
 
@@ -1744,7 +1905,9 @@ function setupTabEventListeners(tabId) {
   const canvasAddImageBtn = toolbar.querySelector('.canvas-add-image-btn');
   const canvasAddVideoBtn = toolbar.querySelector('.canvas-add-video-btn');
   const canvasAddTextBtn = toolbar.querySelector('.canvas-add-text-btn');
+  const canvasClearBtn = toolbar.querySelector('.canvas-clear-btn');
   const canvasImageInput = toolbar.querySelector('.canvas-image-input');
+  const canvasPaletteButtons = [...toolbar.querySelectorAll('.canvas-palette-btn')];
 
   renderPaletteForToolbar(toolbar, tabId);
 
@@ -1872,10 +2035,17 @@ function setupTabEventListeners(tabId) {
   });
 
   drawToolSelect.addEventListener('change', (event) => {
-    appSettings.activeTool = event.target.value;
-    syncDrawControls();
-    applyAllInteractionStates();
-    markDirty();
+    setActiveTool(event.target.value);
+  });
+
+  canvasPaletteButtons.forEach((button) => {
+    button.addEventListener('click', () => {
+      const tool = button.dataset.tool;
+      if (!tool || appSettings.activeTool === tool) {
+        return;
+      }
+      setActiveTool(tool);
+    });
   });
 
   drawColorInput.addEventListener('change', (event) => {
@@ -1933,6 +2103,14 @@ function setupTabEventListeners(tabId) {
     }
     addCanvasTextBox(tabId);
   });
+
+  const handleCanvasClear = () => {
+    if (appSettings.editLocked) {
+      return;
+    }
+    clearCanvasTabContent(tabId);
+  };
+  canvasClearBtn?.addEventListener('click', handleCanvasClear);
 
   backgroundSelect.addEventListener('change', (event) => {
     const tabData = tabs.get(tabId);
@@ -2183,6 +2361,9 @@ function syncDrawControls() {
     if (sizeInput) {
       sizeInput.value = String(appSettings.drawSize);
     }
+    toolbar.querySelectorAll('.canvas-palette-btn').forEach((button) => {
+      button.classList.toggle('active', button.dataset.tool === appSettings.activeTool);
+    });
   });
 }
 
@@ -2262,7 +2443,7 @@ function updateContrastWarningForActiveTab() {
 function initializeCanvas(tabId) {
   const tabData = tabs.get(tabId);
   const dom = getTabDom(tabId);
-  if (!tabData || !dom.stage || !dom.canvas) {
+  if (!tabData || !dom.stage || !dom.canvas || !dom.laserCanvas) {
     return;
   }
 
@@ -2279,13 +2460,14 @@ function initializeCanvas(tabId) {
     startY: 0,
     baseImage: null
   });
+  ensureLaserState(tabId);
   tabData.resizeObserver = observer;
 }
 
 function resizeCanvas(tabId) {
   const dom = getTabDom(tabId);
   const tabData = tabs.get(tabId);
-  if (!dom.canvas || !dom.stage || !tabData) {
+  if (!dom.canvas || !dom.laserCanvas || !dom.stage || !tabData) {
     return;
   }
 
@@ -2300,13 +2482,19 @@ function resizeCanvas(tabId) {
   const targetHeight = Math.floor(height * devicePixelRatio);
 
   if (dom.canvas.width === targetWidth && dom.canvas.height === targetHeight) {
-    return;
+    if (dom.laserCanvas.width === targetWidth && dom.laserCanvas.height === targetHeight) {
+      return;
+    }
   }
 
   dom.canvas.width = targetWidth;
   dom.canvas.height = targetHeight;
   dom.canvas.style.width = `${width}px`;
   dom.canvas.style.height = `${height}px`;
+  dom.laserCanvas.width = targetWidth;
+  dom.laserCanvas.height = targetHeight;
+  dom.laserCanvas.style.width = `${width}px`;
+  dom.laserCanvas.style.height = `${height}px`;
 
   const ctx = dom.canvas.getContext('2d');
   ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -2316,6 +2504,7 @@ function resizeCanvas(tabId) {
   ctx.lineJoin = 'round';
 
   renderDrawingData(tabId);
+  renderLaserTrail(tabId);
 }
 
 function renderDrawingData(tabId) {
@@ -2442,6 +2631,106 @@ function drawShape(ctx, tool, startX, startY, endX, endY) {
   }
 }
 
+function ensureLaserState(tabId) {
+  if (!laserStates.has(tabId)) {
+    laserStates.set(tabId, {
+      segments: [],
+      isDrawing: false,
+      pointerId: null,
+      lastPoint: null,
+      rafId: null
+    });
+  }
+  return laserStates.get(tabId);
+}
+
+function scheduleLaserRender(tabId) {
+  const state = ensureLaserState(tabId);
+  if (state.rafId) {
+    return;
+  }
+  state.rafId = requestAnimationFrame(() => renderLaserTrail(tabId));
+}
+
+function renderLaserTrail(tabId) {
+  const dom = getTabDom(tabId);
+  const state = laserStates.get(tabId);
+  if (!dom.laserCanvas || !state) {
+    return;
+  }
+
+  state.rafId = null;
+  const ctx = dom.laserCanvas.getContext('2d');
+  if (!ctx) {
+    return;
+  }
+
+  const now = performance.now();
+  state.segments = state.segments.filter((segment) => (now - segment.createdAt) < LASER_FADE_MS);
+
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, dom.laserCanvas.width, dom.laserCanvas.height);
+
+  if (state.segments.length > 0) {
+    const dpr = window.devicePixelRatio || 1;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+
+    state.segments.forEach((segment) => {
+      const age = now - segment.createdAt;
+      const alpha = clamp(1 - (age / LASER_FADE_MS), 0, 1);
+      ctx.strokeStyle = `rgba(255, 59, 48, ${alpha})`;
+      ctx.lineWidth = segment.size;
+      ctx.beginPath();
+      ctx.moveTo(segment.x1, segment.y1);
+      ctx.lineTo(segment.x2, segment.y2);
+      ctx.stroke();
+    });
+  }
+
+  if (state.isDrawing || state.segments.length > 0) {
+    scheduleLaserRender(tabId);
+  }
+}
+
+function beginLaserTrail(tabId, pointerId, point) {
+  const state = ensureLaserState(tabId);
+  state.isDrawing = true;
+  state.pointerId = pointerId;
+  state.lastPoint = point;
+  scheduleLaserRender(tabId);
+}
+
+function appendLaserTrail(tabId, pointerId, point) {
+  const state = ensureLaserState(tabId);
+  if (!state.isDrawing || state.pointerId !== pointerId || !state.lastPoint) {
+    return;
+  }
+
+  state.segments.push({
+    x1: state.lastPoint.x,
+    y1: state.lastPoint.y,
+    x2: point.x,
+    y2: point.y,
+    createdAt: performance.now(),
+    size: Math.max(2, appSettings.drawSize + 2)
+  });
+  state.lastPoint = point;
+  scheduleLaserRender(tabId);
+}
+
+function endLaserTrail(tabId, pointerId) {
+  const state = ensureLaserState(tabId);
+  if (state.pointerId !== pointerId) {
+    return;
+  }
+  state.isDrawing = false;
+  state.pointerId = null;
+  state.lastPoint = null;
+  scheduleLaserRender(tabId);
+}
+
 function persistDrawingForTab(tabId) {
   const tabData = tabs.get(tabId);
   const dom = getTabDom(tabId);
@@ -2482,65 +2771,29 @@ function setupDrawingHandlers(tabId) {
     return;
   }
 
-  dom.canvas.addEventListener('pointerdown', (event) => {
-    if (event.pointerType === 'pen') {
-      penPointers.add(event.pointerId);
+  const isObjectControlTarget = (event) => {
+    if (!(event.target instanceof Element)) {
+      return false;
     }
-    if (event.pointerType === 'touch' && penPointers.size > 0) {
-      return;
-    }
-
-    if (!canDrawOnTab(tabId)) {
-      return;
-    }
-
-    const point = getPointerPointInCanvas(tabId, event);
-    const ctx = dom.canvas.getContext('2d');
-    configureDrawingContext(ctx, appSettings.activeTool);
-
-    drawingState.isDrawing = true;
-    drawingState.pointerId = event.pointerId;
-    drawingState.startX = point.x;
-    drawingState.startY = point.y;
-    drawingState.baseImage = null;
-
-    if (appSettings.activeTool === 'pen' || appSettings.activeTool === 'highlighter' || appSettings.activeTool === 'eraser') {
-      ctx.beginPath();
-      ctx.moveTo(point.x, point.y);
-    } else {
-      drawingState.baseImage = ctx.getImageData(0, 0, dom.canvas.width, dom.canvas.height);
-    }
-
-    dom.canvas.setPointerCapture(event.pointerId);
-    event.preventDefault();
-  });
-
-  dom.canvas.addEventListener('pointermove', (event) => {
-    if (!drawingState.isDrawing || drawingState.pointerId !== event.pointerId) {
-      return;
-    }
-
-    const point = getPointerPointInCanvas(tabId, event);
-    const ctx = dom.canvas.getContext('2d');
-    configureDrawingContext(ctx, appSettings.activeTool);
-
-    if (appSettings.activeTool === 'pen' || appSettings.activeTool === 'highlighter' || appSettings.activeTool === 'eraser') {
-      ctx.lineTo(point.x, point.y);
-      ctx.stroke();
-    } else if (drawingState.baseImage) {
-      ctx.putImageData(drawingState.baseImage, 0, 0);
-      drawShape(ctx, appSettings.activeTool, drawingState.startX, drawingState.startY, point.x, point.y);
-    }
-    event.preventDefault();
-  });
+    return Boolean(
+      event.target.closest('.canvas-object-handle') ||
+      event.target.closest('.canvas-object-remove') ||
+      event.target.closest('.canvas-object-resize') ||
+      event.target.closest('.canvas-text-content')
+    );
+  };
 
   const finishDrawing = (event) => {
-    if (event.pointerType === 'pen') {
-      penPointers.delete(event.pointerId);
+    if (!drawingState.isDrawing || drawingState.pointerId !== event.pointerId) {
+      return false;
     }
 
-    if (!drawingState.isDrawing || drawingState.pointerId !== event.pointerId) {
-      return;
+    if (appSettings.activeTool === 'laser') {
+      endLaserTrail(tabId, event.pointerId);
+      drawingState.isDrawing = false;
+      drawingState.pointerId = null;
+      drawingState.baseImage = null;
+      return true;
     }
 
     if (drawingState.baseImage) {
@@ -2554,19 +2807,10 @@ function setupDrawingHandlers(tabId) {
     drawingState.isDrawing = false;
     drawingState.pointerId = null;
     drawingState.baseImage = null;
-
-    try {
-      dom.canvas.releasePointerCapture(event.pointerId);
-    } catch (error) {
-      // Ignore pointer capture release errors.
-    }
-
     persistDrawingForTab(tabId);
     markDirty();
+    return true;
   };
-
-  dom.canvas.addEventListener('pointerup', finishDrawing);
-  dom.canvas.addEventListener('pointercancel', finishDrawing);
 
   dom.stage.addEventListener('wheel', (event) => {
     if (!(event.ctrlKey || appSettings.activeTool === 'pan')) {
@@ -2595,6 +2839,43 @@ function setupDrawingHandlers(tabId) {
   }, { passive: false });
 
   dom.stage.addEventListener('pointerdown', (event) => {
+    if (event.pointerType === 'pen') {
+      penPointers.add(event.pointerId);
+    }
+
+    if (event.pointerType === 'touch' && penPointers.size > 0) {
+      return;
+    }
+
+    if (canDrawOnTab(tabId) && !shouldStartPan(event) && !isObjectControlTarget(event)) {
+      const point = getPointerPointInCanvas(tabId, event);
+      const ctx = dom.canvas.getContext('2d');
+      configureDrawingContext(ctx, appSettings.activeTool);
+
+      drawingState.isDrawing = true;
+      drawingState.pointerId = event.pointerId;
+      drawingState.startX = point.x;
+      drawingState.startY = point.y;
+      drawingState.baseImage = null;
+
+      if (appSettings.activeTool === 'laser') {
+        beginLaserTrail(tabId, event.pointerId, point);
+      } else if (appSettings.activeTool === 'pen' || appSettings.activeTool === 'highlighter' || appSettings.activeTool === 'eraser') {
+        ctx.beginPath();
+        ctx.moveTo(point.x, point.y);
+      } else {
+        drawingState.baseImage = ctx.getImageData(0, 0, dom.canvas.width, dom.canvas.height);
+      }
+
+      dom.stage.setPointerCapture(event.pointerId);
+      event.preventDefault();
+      return;
+    }
+
+    if (event.target instanceof Element && event.target.closest('.canvas-object')) {
+      return;
+    }
+
     if (event.pointerType === 'touch') {
       touchPointers.set(event.pointerId, { x: event.clientX, y: event.clientY, tabId });
     }
@@ -2626,6 +2907,24 @@ function setupDrawingHandlers(tabId) {
   });
 
   dom.stage.addEventListener('pointermove', (event) => {
+    if (drawingState.isDrawing && drawingState.pointerId === event.pointerId) {
+      const point = getPointerPointInCanvas(tabId, event);
+      const ctx = dom.canvas.getContext('2d');
+      configureDrawingContext(ctx, appSettings.activeTool);
+
+      if (appSettings.activeTool === 'laser') {
+        appendLaserTrail(tabId, event.pointerId, point);
+      } else if (appSettings.activeTool === 'pen' || appSettings.activeTool === 'highlighter' || appSettings.activeTool === 'eraser') {
+        ctx.lineTo(point.x, point.y);
+        ctx.stroke();
+      } else if (drawingState.baseImage) {
+        ctx.putImageData(drawingState.baseImage, 0, 0);
+        drawShape(ctx, appSettings.activeTool, drawingState.startX, drawingState.startY, point.x, point.y);
+      }
+      event.preventDefault();
+      return;
+    }
+
     if (!activePanState || activePanState.tabId !== tabId) {
       if (event.pointerType === 'touch' && touchPointers.has(event.pointerId)) {
         touchPointers.set(event.pointerId, { x: event.clientX, y: event.clientY, tabId });
@@ -2673,6 +2972,19 @@ function setupDrawingHandlers(tabId) {
   });
 
   const endPan = (event) => {
+    if (event.pointerType === 'pen') {
+      penPointers.delete(event.pointerId);
+    }
+
+    if (finishDrawing(event)) {
+      try {
+        dom.stage.releasePointerCapture(event.pointerId);
+      } catch (error) {
+        // Ignore pointer capture release errors.
+      }
+      return;
+    }
+
     if (event.pointerType === 'touch') {
       touchPointers.delete(event.pointerId);
     }
@@ -2748,24 +3060,22 @@ function applyInteractionStateToTab(tabId) {
     return;
   }
 
+  const canvasTab = tabData.kind === 'canvas';
   const isSecondarySplit = appSettings.splitMode && appSettings.splitTabId === tabId && activeTabId !== tabId;
-  const canEditText = !appSettings.editLocked && !isSecondarySplit;
-  const canInteractDrawing = canEditText && appSettings.activeTool !== 'text';
-  const canInteractCanvasObjects = canEditText && (appSettings.activeTool === 'text' || appSettings.activeTool === 'pan');
+  const canEdit = !appSettings.editLocked && !isSecondarySplit;
+  const canEditText = canEdit && !canvasTab;
+  const canInteractCanvasObjects = canvasTab && canEdit;
 
   dom.chalkboard.contentEditable = canEditText ? 'true' : 'false';
   dom.chalkboard.classList.toggle('locked', !canEditText);
+  dom.chalkboard.style.pointerEvents = canvasTab ? 'none' : 'auto';
 
-  if (canInteractDrawing) {
-    dom.canvas.style.pointerEvents = 'auto';
-  } else {
-    dom.canvas.style.pointerEvents = 'none';
-  }
+  dom.canvas.style.pointerEvents = 'none';
 
   if (dom.objectLayer) {
     dom.objectLayer.classList.toggle('interactive', canInteractCanvasObjects);
     dom.objectLayer.querySelectorAll('.canvas-text-content').forEach((textbox) => {
-      textbox.contentEditable = canEditText ? 'true' : 'false';
+      textbox.contentEditable = canEdit ? 'true' : 'false';
     });
   }
 
@@ -2792,6 +3102,24 @@ function setupGlobalDocumentHandlers() {
     }
     if (!event.target.closest('.math-button') && !event.target.closest('.math-symbol-panel')) {
       document.querySelectorAll('.math-symbol-panel.show').forEach((panel) => panel.classList.remove('show'));
+    }
+  });
+
+  document.addEventListener('paste', (event) => {
+    if (!activeTabId || appSettings.editLocked) {
+      return;
+    }
+    if (!isCanvasTab(activeTabId)) {
+      return;
+    }
+
+    const activeElement = document.activeElement;
+    if (activeElement && activeElement.closest && activeElement.closest('.canvas-text-content')) {
+      return;
+    }
+
+    if (handleCanvasClipboardPayload(activeTabId, event.clipboardData)) {
+      event.preventDefault();
     }
   });
 
