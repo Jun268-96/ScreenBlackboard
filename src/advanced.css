@@ -98,6 +98,27 @@ body.theme-high-contrast {
   gap: 0.4rem;
 }
 
+.canvas-tools {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.canvas-tool-btn {
+  width: auto !important;
+  min-width: 58px;
+  height: 30px !important;
+  padding: 0 0.55rem !important;
+  font-size: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.18) !important;
+  border-radius: 6px !important;
+  background: rgba(255, 255, 255, 0.05) !important;
+}
+
+.canvas-tool-btn:hover {
+  background: rgba(255, 255, 255, 0.12) !important;
+}
+
 .draw-tool-select,
 .background-select {
   height: 30px;
@@ -241,56 +262,107 @@ body.theme-high-contrast {
 .drawing-canvas {
   position: absolute;
   inset: 0;
-  z-index: 3;
+  z-index: 4;
   pointer-events: none;
   touch-action: none;
 }
 
-.freeze-overlay,
-.spotlight-overlay,
 .mask-overlay {
   position: absolute;
   inset: 0;
-  z-index: 4;
+  z-index: 8;
   pointer-events: none;
-}
-
-.freeze-overlay {
-  display: none;
-  align-items: center;
-  justify-content: center;
-  font-size: 28px;
-  font-weight: 700;
-  color: rgba(255, 255, 255, 0.95);
-  background: rgba(0, 0, 0, 0.45);
-  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.5);
-}
-
-.freeze-overlay.active {
-  display: flex;
-}
-
-.spotlight-overlay {
-  display: none;
-  background:
-    radial-gradient(
-      circle var(--spotlight-radius, 180px) at var(--spotlight-x, 50%) var(--spotlight-y, 50%),
-      rgba(0, 0, 0, 0) 0 32%,
-      rgba(0, 0, 0, 0.78) 75%
-    );
-}
-
-.spotlight-overlay.active {
-  display: block;
 }
 
 .mask-overlay {
   display: none;
-  background: rgba(0, 0, 0, 0.82);
+  background: rgba(0, 0, 0, 0.96);
 }
 
 .mask-overlay.active {
   display: block;
+}
+
+.canvas-object-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+}
+
+.canvas-object {
+  position: absolute;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.58);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.35);
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.canvas-object-layer.interactive .canvas-object {
+  pointer-events: auto;
+}
+
+.canvas-object.dragging {
+  opacity: 0.9;
+}
+
+.canvas-object-handle {
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 0.5rem;
+  background: rgba(0, 0, 0, 0.76);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.16);
+  cursor: grab;
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 12px;
+  user-select: none;
+}
+
+.canvas-object.dragging .canvas-object-handle {
+  cursor: grabbing;
+}
+
+.canvas-object-remove {
+  width: 24px !important;
+  height: 24px !important;
+  border-radius: 6px !important;
+  font-size: 14px;
+  padding: 0 !important;
+  border: 1px solid rgba(255, 255, 255, 0.25) !important;
+  background: rgba(239, 68, 68, 0.2) !important;
+}
+
+.canvas-object-body {
+  width: 100%;
+  height: calc(100% - 30px);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.canvas-object-body img,
+.canvas-object-body iframe {
+  width: 100%;
+  height: 100%;
+  border: none;
+  display: block;
+  object-fit: contain;
+  background: #000;
+}
+
+.canvas-text-content {
+  width: 100%;
+  height: 100%;
+  color: #ffffff;
+  font-size: 24px;
+  line-height: 1.35;
+  padding: 0.65rem;
+  outline: none;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .board-stage.background-plain {

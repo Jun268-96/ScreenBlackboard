@@ -11,13 +11,12 @@
     <div class="tabs-container">
       <div class="tabs-wrapper"></div>
       <button id="addTabButton" class="add-tab-btn" title="새 칠판 추가">+</button>
+      <button id="addCanvasTabButton" class="add-tab-btn" title="새 캔버스 탭 추가">캔버스+</button>
       <button id="saveButton" class="save-btn" title="수동 저장">저장</button>
     </div>
 
     <div class="title-quick-actions">
       <button id="lockModeButton" title="편집 잠금 (Ctrl+L)">잠금</button>
-      <button id="freezeModeButton" title="판서 일시 정지 (Ctrl+Shift+F)">Freeze</button>
-      <button id="spotlightButton" title="스포트라이트 (Ctrl+Shift+S)">조명</button>
       <button id="maskButton" title="가림막 (Ctrl+Shift+M)">가림</button>
       <button id="splitButton" title="A/B 분할 보기 (Ctrl+Shift+V)">A/B</button>
       <button id="snapshotButton" title="스냅샷 타임라인">스냅샷</button>
@@ -112,11 +111,9 @@
     </div>
 
     <div class="panel-section">
-      <h4>발표 오버레이</h4>
-      <label for="spotlightRadiusInput">스포트라이트 반경</label>
-      <input id="spotlightRadiusInput" type="range" min="90" max="360" step="10" value="180">
-      <label for="maskRevealInput">가림막 불투명도</label>
-      <input id="maskRevealInput" type="range" min="10" max="100" step="5" value="60">
+      <h4>가림막</h4>
+      <label for="maskRevealInput">가림 강도</label>
+      <input id="maskRevealInput" type="range" min="80" max="100" step="2" value="96">
     </div>
 
     <div class="panel-section">

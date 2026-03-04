@@ -165,6 +165,12 @@
   background-color: rgba(255, 255, 255, 0.1);
   color: var(--chalk);
 }
+
+#addCanvasTabButton {
+  font-size: 13px;
+  line-height: 1;
+}
+
 .save-btn {
   background-color: rgba(77, 148, 255, 0.15);
   border: 1px solid rgba(77, 148, 255, 0.3);

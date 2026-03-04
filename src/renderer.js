@@ -23,8 +23,6 @@ const DEFAULT_FORMAT_STATE = {
 
 const DEFAULT_SETTINGS = {
   editLocked: false,
-  freezeMode: false,
-  spotlightEnabled: false,
   maskEnabled: false,
   splitMode: false,
   splitTabId: null,
@@ -35,8 +33,7 @@ const DEFAULT_SETTINGS = {
   performancePreset: 'standard',
   sidebarWidth: 500,
   selectedMonitorId: null,
-  spotlightRadius: 180,
-  maskRevealPercent: 60,
+  maskRevealPercent: 96,
   activeTool: 'text',
   drawColor: '#ffffff',
   drawSize: 6
@@ -73,9 +70,11 @@ class TabData {
   constructor(id, title) {
     this.id = id;
     this.title = title;
+    this.kind = 'chalkboard';
     this.content = '';
     this.formatState = { ...DEFAULT_FORMAT_STATE };
     this.drawingData = null;
+    this.canvasItems = [];
     this.backgroundPreset = 'plain';
     this.viewState = {
       scale: 1,
@@ -147,9 +146,8 @@ function getTabDom(tabId) {
     transform: document.querySelector(`.board-transform[data-tab-id="${tabId}"]`),
     chalkboard: document.querySelector(`.chalkboard[data-tab-id="${tabId}"]`),
     canvas: document.querySelector(`.drawing-canvas[data-tab-id="${tabId}"]`),
-    spotlightOverlay: document.querySelector(`.spotlight-overlay[data-tab-id="${tabId}"]`),
-    maskOverlay: document.querySelector(`.mask-overlay[data-tab-id="${tabId}"]`),
-    freezeOverlay: document.querySelector(`.freeze-overlay[data-tab-id="${tabId}"]`)
+    objectLayer: document.querySelector(`.canvas-object-layer[data-tab-id="${tabId}"]`),
+    maskOverlay: document.querySelector(`.mask-overlay[data-tab-id="${tabId}"]`)
   };
 }
 
@@ -221,6 +219,282 @@ function insertTextAtCursor(chalkboard, text) {
   insertNodeAtCursor(chalkboard, node);
 }
 
+function isCanvasTab(tabId) {
+  return tabs.get(tabId)?.kind === 'canvas';
+}
+
+function createCanvasObjectId() {
+  return `obj-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+}
+
+function normalizeVideoEmbedUrl(rawUrl) {
+  let parsed;
+  try {
+    parsed = new URL(rawUrl);
+  } catch (error) {
+    return null;
+  }
+
+  const host = parsed.hostname.toLowerCase();
+  if (host.includes('youtube.com')) {
+    const videoId = parsed.searchParams.get('v');
+    if (videoId) {
+      return `https://www.youtube.com/embed/${videoId}`;
+    }
+
+    const pathParts = parsed.pathname.split('/').filter(Boolean);
+    if (pathParts[0] === 'shorts' && pathParts[1]) {
+      return `https://www.youtube.com/embed/${pathParts[1]}`;
+    }
+  }
+
+  if (host.includes('youtu.be')) {
+    const videoId = parsed.pathname.split('/').filter(Boolean)[0];
+    if (videoId) {
+      return `https://www.youtube.com/embed/${videoId}`;
+    }
+  }
+
+  return parsed.toString();
+}
+
+function createCanvasObjectElement(item) {
+  const object = document.createElement('div');
+  object.className = `canvas-object canvas-object-${item.type}`;
+  object.dataset.itemId = item.id || createCanvasObjectId();
+  object.dataset.itemType = item.type;
+  object.style.left = `${Math.max(0, Math.round(Number(item.x) || 0))}px`;
+  object.style.top = `${Math.max(0, Math.round(Number(item.y) || 0))}px`;
+  object.style.width = `${clamp(Math.round(Number(item.width) || 320), 120, 1600)}px`;
+  object.style.height = `${clamp(Math.round(Number(item.height) || 220), 80, 1200)}px`;
+
+  const label = item.type === 'image' ? '이미지' : item.type === 'video' ? '영상' : '텍스트';
+  object.innerHTML = `
+    <div class="canvas-object-handle">
+      <span>${label}</span>
+      <button type="button" class="canvas-object-remove" title="삭제">&times;</button>
+    </div>
+    <div class="canvas-object-body"></div>
+  `;
+
+  const body = object.querySelector('.canvas-object-body');
+  if (item.type === 'image') {
+    const image = document.createElement('img');
+    image.src = item.src || '';
+    image.alt = '캔버스 이미지';
+    body.appendChild(image);
+  } else if (item.type === 'video') {
+    const iframe = document.createElement('iframe');
+    iframe.src = item.src || '';
+    iframe.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share';
+    iframe.allowFullscreen = true;
+    body.appendChild(iframe);
+  } else {
+    const text = document.createElement('div');
+    text.className = 'canvas-text-content';
+    text.contentEditable = 'true';
+    text.innerHTML = item.html || '텍스트 입력';
+    body.appendChild(text);
+  }
+
+  return object;
+}
+
+function syncCanvasItemsFromDom(tabId) {
+  const tabData = tabs.get(tabId);
+  const dom = getTabDom(tabId);
+  if (!tabData || !dom.objectLayer) {
+    return;
+  }
+
+  const items = [];
+  dom.objectLayer.querySelectorAll('.canvas-object').forEach((object) => {
+    const type = object.dataset.itemType;
+    const width = parseFloat(object.style.width) || object.offsetWidth || 320;
+    const height = parseFloat(object.style.height) || object.offsetHeight || 220;
+    const item = {
+      id: object.dataset.itemId || createCanvasObjectId(),
+      type,
+      x: parseFloat(object.style.left) || 0,
+      y: parseFloat(object.style.top) || 0,
+      width,
+      height
+    };
+
+    if (type === 'image') {
+      item.src = object.querySelector('img')?.src || '';
+    } else if (type === 'video') {
+      item.src = object.querySelector('iframe')?.src || '';
+    } else {
+      item.html = object.querySelector('.canvas-text-content')?.innerHTML || '';
+    }
+
+    items.push(item);
+  });
+
+  tabData.canvasItems = items;
+}
+
+function restoreCanvasItems(tabId) {
+  const tabData = tabs.get(tabId);
+  const dom = getTabDom(tabId);
+  if (!tabData || !dom.objectLayer) {
+    return;
+  }
+
+  dom.objectLayer.innerHTML = '';
+  (tabData.canvasItems || []).forEach((item) => {
+    dom.objectLayer.appendChild(createCanvasObjectElement(item));
+  });
+}
+
+function addCanvasItem(tabId, item) {
+  if (!isCanvasTab(tabId)) {
+    return;
+  }
+  const dom = getTabDom(tabId);
+  if (!dom.objectLayer) {
+    return;
+  }
+  dom.objectLayer.appendChild(createCanvasObjectElement(item));
+  syncCanvasItemsFromDom(tabId);
+  markDirty();
+}
+
+function addCanvasImageFromData(tabId, dataUrl) {
+  addCanvasItem(tabId, {
+    id: createCanvasObjectId(),
+    type: 'image',
+    x: 80,
+    y: 80,
+    width: 420,
+    height: 280,
+    src: dataUrl
+  });
+}
+
+function addCanvasVideoFromUrl(tabId, rawUrl) {
+  const embedUrl = normalizeVideoEmbedUrl(rawUrl);
+  if (!embedUrl) {
+    return false;
+  }
+  addCanvasItem(tabId, {
+    id: createCanvasObjectId(),
+    type: 'video',
+    x: 120,
+    y: 120,
+    width: 560,
+    height: 320,
+    src: embedUrl
+  });
+  return true;
+}
+
+function addCanvasTextBox(tabId) {
+  addCanvasItem(tabId, {
+    id: createCanvasObjectId(),
+    type: 'text',
+    x: 100,
+    y: 90,
+    width: 360,
+    height: 220,
+    html: '텍스트 입력'
+  });
+}
+
+function setupCanvasObjectLayerHandlers(tabId) {
+  const dom = getTabDom(tabId);
+  if (!dom.objectLayer || dom.objectLayer.dataset.bound === 'true') {
+    return;
+  }
+  dom.objectLayer.dataset.bound = 'true';
+
+  let dragState = null;
+
+  dom.objectLayer.addEventListener('click', (event) => {
+    const removeButton = event.target.closest('.canvas-object-remove');
+    if (!removeButton) {
+      return;
+    }
+    const object = removeButton.closest('.canvas-object');
+    object?.remove();
+    syncCanvasItemsFromDom(tabId);
+    markDirty();
+  });
+
+  dom.objectLayer.addEventListener('input', (event) => {
+    if (!event.target.closest('.canvas-text-content')) {
+      return;
+    }
+    syncCanvasItemsFromDom(tabId);
+    markDirty(false);
+  });
+
+  dom.objectLayer.addEventListener('pointerdown', (event) => {
+    if (appSettings.editLocked) {
+      return;
+    }
+
+    const handle = event.target.closest('.canvas-object-handle');
+    if (!handle) {
+      return;
+    }
+    const object = handle.closest('.canvas-object');
+    if (!object) {
+      return;
+    }
+
+    const stageRect = dom.stage.getBoundingClientRect();
+    const objectRect = object.getBoundingClientRect();
+    dragState = {
+      pointerId: event.pointerId,
+      object,
+      stageRect,
+      offsetX: event.clientX - objectRect.left,
+      offsetY: event.clientY - objectRect.top
+    };
+
+    object.classList.add('dragging');
+    dom.objectLayer.setPointerCapture(event.pointerId);
+    event.preventDefault();
+    event.stopPropagation();
+  });
+
+  dom.objectLayer.addEventListener('pointermove', (event) => {
+    if (!dragState || dragState.pointerId !== event.pointerId) {
+      return;
+    }
+
+    const maxX = Math.max(0, dragState.stageRect.width - dragState.object.offsetWidth);
+    const maxY = Math.max(0, dragState.stageRect.height - dragState.object.offsetHeight);
+    const x = clamp(event.clientX - dragState.stageRect.left - dragState.offsetX, 0, maxX);
+    const y = clamp(event.clientY - dragState.stageRect.top - dragState.offsetY, 0, maxY);
+    dragState.object.style.left = `${Math.round(x)}px`;
+    dragState.object.style.top = `${Math.round(y)}px`;
+    markDirty(false);
+    event.preventDefault();
+  });
+
+  const finishDrag = (event) => {
+    if (!dragState || dragState.pointerId !== event.pointerId) {
+      return;
+    }
+
+    dragState.object.classList.remove('dragging');
+    try {
+      dom.objectLayer.releasePointerCapture(event.pointerId);
+    } catch (error) {
+      // Ignore pointer capture release errors.
+    }
+    dragState = null;
+    syncCanvasItemsFromDom(tabId);
+    markDirty();
+  };
+
+  dom.objectLayer.addEventListener('pointerup', finishDrag);
+  dom.objectLayer.addEventListener('pointercancel', finishDrag);
+}
+
 function parseColorToRgb(color) {
   const hex = color.startsWith('#') ? color : '#ffffff';
   const normalized = hex.length === 4
@@ -267,9 +541,11 @@ function serializeTabs() {
     serialized[tabId] = {
       id: tabData.id,
       title: tabData.title,
+      kind: tabData.kind,
       content: tabData.content,
       formatState: tabData.formatState,
       drawingData: tabData.drawingData,
+      canvasItems: tabData.canvasItems,
       backgroundPreset: tabData.backgroundPreset,
       viewState: tabData.viewState
     };
@@ -462,7 +738,13 @@ async function loadAppSettings() {
     }
 
     const parsed = JSON.parse(savedData);
-    appSettings = { ...DEFAULT_SETTINGS, ...parsed };
+    const normalized = { ...DEFAULT_SETTINGS };
+    Object.keys(DEFAULT_SETTINGS).forEach((key) => {
+      if (parsed[key] !== undefined) {
+        normalized[key] = parsed[key];
+      }
+    });
+    appSettings = normalized;
   } catch (error) {
     console.error('App settings load error:', error);
   }
@@ -723,6 +1005,7 @@ function setupWindowControls() {
   const maximizeButton = document.getElementById('maximizeButton');
   const closeButton = document.getElementById('closeButton');
   const addTabButton = document.getElementById('addTabButton');
+  const addCanvasTabButton = document.getElementById('addCanvasTabButton');
   const saveButton = document.getElementById('saveButton');
 
   let isAlwaysOnTop = false;
@@ -760,6 +1043,11 @@ function setupWindowControls() {
     markDirty();
   });
 
+  addCanvasTabButton?.addEventListener('click', () => {
+    createTab(`캔버스 ${tabCounter + 1}`, { kind: 'canvas' });
+    markDirty();
+  });
+
   saveButton?.addEventListener('click', async () => {
     await handleManualSaveClick(saveButton);
   });
@@ -767,8 +1055,6 @@ function setupWindowControls() {
 
 function updateHeaderButtonStates() {
   document.getElementById('lockModeButton')?.classList.toggle('active', appSettings.editLocked);
-  document.getElementById('freezeModeButton')?.classList.toggle('active', appSettings.freezeMode);
-  document.getElementById('spotlightButton')?.classList.toggle('active', appSettings.spotlightEnabled);
   document.getElementById('maskButton')?.classList.toggle('active', appSettings.maskEnabled);
   document.getElementById('splitButton')?.classList.toggle('active', appSettings.splitMode);
 }
@@ -785,12 +1071,6 @@ function toggleSetting(key, value = null) {
 function setupHeaderActions() {
   document.getElementById('lockModeButton')?.addEventListener('click', () => {
     toggleSetting('editLocked');
-  });
-  document.getElementById('freezeModeButton')?.addEventListener('click', () => {
-    toggleSetting('freezeMode');
-  });
-  document.getElementById('spotlightButton')?.addEventListener('click', () => {
-    toggleSetting('spotlightEnabled');
   });
   document.getElementById('maskButton')?.addEventListener('click', () => {
     toggleSetting('maskEnabled');
@@ -875,13 +1155,8 @@ function setupPanels() {
     markDirty();
   });
 
-  document.getElementById('spotlightRadiusInput')?.addEventListener('input', (event) => {
-    appSettings.spotlightRadius = parseInt(event.target.value, 10) || 180;
-    updateAllOverlays();
-    markDirty();
-  });
   document.getElementById('maskRevealInput')?.addEventListener('input', (event) => {
-    appSettings.maskRevealPercent = parseInt(event.target.value, 10) || 60;
+    appSettings.maskRevealPercent = parseInt(event.target.value, 10) || 96;
     updateAllOverlays();
     markDirty();
   });
@@ -948,15 +1223,37 @@ function applySettingsToUI() {
   document.body.classList.toggle('low-latency', appSettings.lowLatencyMode);
   document.body.classList.toggle('touch-optimized', appSettings.touchOptimized);
   document.documentElement.style.setProperty('--sidebar-width', `${clamp(appSettings.sidebarWidth, 280, 760)}px`);
+  appSettings.maskRevealPercent = clamp(parseInt(appSettings.maskRevealPercent, 10) || 96, 80, 100);
 
-  document.getElementById('highContrastToggle').checked = appSettings.highContrastTheme;
-  document.getElementById('safePaletteToggle').checked = appSettings.safePalette;
-  document.getElementById('lowLatencyToggle').checked = appSettings.lowLatencyMode;
-  document.getElementById('touchOptimizeToggle').checked = appSettings.touchOptimized;
-  document.getElementById('splitModeToggle').checked = appSettings.splitMode;
-  document.getElementById('spotlightRadiusInput').value = appSettings.spotlightRadius;
-  document.getElementById('maskRevealInput').value = appSettings.maskRevealPercent;
-  document.getElementById('presetSelect').value = appSettings.performancePreset;
+  const highContrastToggle = document.getElementById('highContrastToggle');
+  const safePaletteToggle = document.getElementById('safePaletteToggle');
+  const lowLatencyToggle = document.getElementById('lowLatencyToggle');
+  const touchOptimizeToggle = document.getElementById('touchOptimizeToggle');
+  const splitModeToggle = document.getElementById('splitModeToggle');
+  const maskRevealInput = document.getElementById('maskRevealInput');
+  const presetSelect = document.getElementById('presetSelect');
+
+  if (highContrastToggle) {
+    highContrastToggle.checked = appSettings.highContrastTheme;
+  }
+  if (safePaletteToggle) {
+    safePaletteToggle.checked = appSettings.safePalette;
+  }
+  if (lowLatencyToggle) {
+    lowLatencyToggle.checked = appSettings.lowLatencyMode;
+  }
+  if (touchOptimizeToggle) {
+    touchOptimizeToggle.checked = appSettings.touchOptimized;
+  }
+  if (splitModeToggle) {
+    splitModeToggle.checked = appSettings.splitMode;
+  }
+  if (maskRevealInput) {
+    maskRevealInput.value = String(appSettings.maskRevealPercent);
+  }
+  if (presetSelect) {
+    presetSelect.value = appSettings.performancePreset;
+  }
 
   updateHeaderButtonStates();
   updateSplitTargetOptions();
@@ -1070,11 +1367,13 @@ function createTab(title, options = {}) {
   }
 
   const tabData = new TabData(tabId, title);
+  tabData.kind = options.kind || options.data?.kind || 'chalkboard';
 
   if (options.data) {
     tabData.content = options.data.content || '';
     tabData.formatState = { ...DEFAULT_FORMAT_STATE, ...(options.data.formatState || {}) };
     tabData.drawingData = options.data.drawingData || null;
+    tabData.canvasItems = Array.isArray(options.data.canvasItems) ? options.data.canvasItems : [];
     tabData.backgroundPreset = options.data.backgroundPreset || 'plain';
     tabData.viewState = {
       scale: options.data.viewState?.scale || 1,
@@ -1126,6 +1425,8 @@ function createTabElement(tabId, title) {
 }
 
 function createTabContent(tabId) {
+  const tabData = tabs.get(tabId);
+  const isCanvas = tabData?.kind === 'canvas';
   const tabContents = document.getElementById('tabContents');
   const contentElement = document.createElement('div');
   contentElement.className = 'tab-content';
@@ -1217,6 +1518,17 @@ function createTabContent(tabId) {
         </select>
       </div>
 
+      ${isCanvas ? `
+      <div class="divider"></div>
+
+      <div class="canvas-tools">
+        <button class="canvas-tool-btn canvas-add-image-btn" title="이미지 붙여넣기/파일 추가">이미지</button>
+        <button class="canvas-tool-btn canvas-add-video-btn" title="영상 URL 추가">영상</button>
+        <button class="canvas-tool-btn canvas-add-text-btn" title="드래그 가능한 텍스트 박스 추가">텍스트박스</button>
+        <input type="file" class="canvas-image-input hidden-color-picker" accept="image/*">
+      </div>
+      ` : ''}
+
       <button class="math-button" title="수식/심볼">수식</button>
       <div class="math-symbol-panel">
         <button class="symbol-btn" data-symbol="π">π</button>
@@ -1237,9 +1549,8 @@ function createTabContent(tabId) {
     <div class="board-stage background-plain" data-tab-id="${tabId}">
       <div class="board-transform" data-tab-id="${tabId}">
         <div class="chalkboard" contenteditable="true" data-tab-id="${tabId}"></div>
+        ${isCanvas ? `<div class="canvas-object-layer" data-tab-id="${tabId}"></div>` : ''}
         <canvas class="drawing-canvas" data-tab-id="${tabId}"></canvas>
-        <div class="freeze-overlay" data-tab-id="${tabId}">Freeze Mode</div>
-        <div class="spotlight-overlay" data-tab-id="${tabId}"></div>
         <div class="mask-overlay" data-tab-id="${tabId}"></div>
       </div>
     </div>
@@ -1248,6 +1559,7 @@ function createTabContent(tabId) {
   tabContents.appendChild(contentElement);
   setupTabEventListeners(tabId);
   initializeCanvas(tabId);
+  setupCanvasObjectLayerHandlers(tabId);
   loadTabContent(tabId);
   applyTabBackground(tabId);
   applyViewTransform(tabId);
@@ -1308,6 +1620,9 @@ function captureAllTabContents() {
     if (dom.chalkboard) {
       tabData.content = dom.chalkboard.innerHTML;
     }
+    if (dom.objectLayer) {
+      syncCanvasItemsFromDom(tabId);
+    }
   });
 }
 
@@ -1325,8 +1640,10 @@ function loadTabContent(tabId) {
   }
   if (tabData.formatState?.fontSize) {
     dom.chalkboard.style.fontSize = `${tabData.formatState.fontSize}px`;
+    dom.chalkboard.style.lineHeight = textFormatter.calculateLineHeight(tabData.formatState.fontSize);
   }
 
+  restoreCanvasItems(tabId);
   renderDrawingData(tabId);
 }
 
@@ -1424,6 +1741,10 @@ function setupTabEventListeners(tabId) {
   const backgroundSelect = toolbar.querySelector('.background-select');
   const mathButton = toolbar.querySelector('.math-button');
   const symbolPanel = toolbar.querySelector('.math-symbol-panel');
+  const canvasAddImageBtn = toolbar.querySelector('.canvas-add-image-btn');
+  const canvasAddVideoBtn = toolbar.querySelector('.canvas-add-video-btn');
+  const canvasAddTextBtn = toolbar.querySelector('.canvas-add-text-btn');
+  const canvasImageInput = toolbar.querySelector('.canvas-image-input');
 
   renderPaletteForToolbar(toolbar, tabId);
 
@@ -1569,6 +1890,50 @@ function setupTabEventListeners(tabId) {
     markDirty(false);
   });
 
+  canvasAddImageBtn?.addEventListener('click', () => {
+    if (appSettings.editLocked) {
+      return;
+    }
+    canvasImageInput?.click();
+  });
+
+  canvasImageInput?.addEventListener('change', (event) => {
+    if (appSettings.editLocked) {
+      return;
+    }
+    const file = event.target.files?.[0];
+    if (!file || !file.type.startsWith('image/')) {
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      addCanvasImageFromData(tabId, reader.result);
+      event.target.value = '';
+    };
+    reader.readAsDataURL(file);
+  });
+
+  canvasAddVideoBtn?.addEventListener('click', () => {
+    if (appSettings.editLocked) {
+      return;
+    }
+    const url = window.prompt('영상 URL을 입력하세요 (YouTube 링크 가능)');
+    if (!url) {
+      return;
+    }
+    const ok = addCanvasVideoFromUrl(tabId, url.trim());
+    if (!ok) {
+      window.alert('유효한 URL이 아닙니다.');
+    }
+  });
+
+  canvasAddTextBtn?.addEventListener('click', () => {
+    if (appSettings.editLocked) {
+      return;
+    }
+    addCanvasTextBox(tabId);
+  });
+
   backgroundSelect.addEventListener('change', (event) => {
     const tabData = tabs.get(tabId);
     if (!tabData) {
@@ -1608,7 +1973,7 @@ function setupTabEventListeners(tabId) {
     button.addEventListener('click', (event) => {
       event.preventDefault();
       event.stopPropagation();
-      if (appSettings.editLocked || appSettings.freezeMode) {
+      if (appSettings.editLocked) {
         return;
       }
       restoreSelection();
@@ -1622,7 +1987,7 @@ function setupTabEventListeners(tabId) {
   symbolPanel.querySelector('.latex-btn').addEventListener('click', (event) => {
     event.preventDefault();
     event.stopPropagation();
-    if (appSettings.editLocked || appSettings.freezeMode) {
+    if (appSettings.editLocked) {
       return;
     }
     const latex = window.prompt('LaTeX 입력');
@@ -1640,7 +2005,7 @@ function setupTabEventListeners(tabId) {
   });
 
   chalkboard.addEventListener('input', (event) => {
-    if (appSettings.editLocked || appSettings.freezeMode) {
+    if (appSettings.editLocked) {
       return;
     }
     textFormatter.handleInput(event);
@@ -1695,7 +2060,7 @@ function setupTabEventListeners(tabId) {
   });
 
   chalkboard.addEventListener('paste', (event) => {
-    if (appSettings.editLocked || appSettings.freezeMode) {
+    if (appSettings.editLocked) {
       return;
     }
 
@@ -1713,6 +2078,10 @@ function setupTabEventListeners(tabId) {
 
     const reader = new FileReader();
     reader.onload = () => {
+      if (isCanvasTab(tabId)) {
+        addCanvasImageFromData(tabId, reader.result);
+        return;
+      }
       const image = document.createElement('img');
       image.className = 'chalk-image';
       image.src = reader.result;
@@ -1728,7 +2097,7 @@ function setupTabEventListeners(tabId) {
   });
 
   chalkboard.addEventListener('drop', (event) => {
-    if (appSettings.editLocked || appSettings.freezeMode) {
+    if (appSettings.editLocked) {
       return;
     }
 
@@ -1741,6 +2110,10 @@ function setupTabEventListeners(tabId) {
 
     const reader = new FileReader();
     reader.onload = () => {
+      if (isCanvasTab(tabId)) {
+        addCanvasImageFromData(tabId, reader.result);
+        return;
+      }
       const image = document.createElement('img');
       image.className = 'chalk-image';
       image.src = reader.result;
@@ -2083,7 +2456,7 @@ function canDrawOnTab(tabId) {
   if (isSecondarySplit) {
     return false;
   }
-  if (appSettings.freezeMode || appSettings.editLocked) {
+  if (appSettings.editLocked) {
     return false;
   }
   if (appSettings.activeTool === 'text' || appSettings.activeTool === 'pan') {
@@ -2093,9 +2466,6 @@ function canDrawOnTab(tabId) {
 }
 
 function shouldStartPan(event) {
-  if (appSettings.freezeMode) {
-    return false;
-  }
   if (appSettings.activeTool === 'pan') {
     return true;
   }
@@ -2256,10 +2626,6 @@ function setupDrawingHandlers(tabId) {
   });
 
   dom.stage.addEventListener('pointermove', (event) => {
-    if (appSettings.spotlightEnabled) {
-      updateSpotlightPosition(tabId, event);
-    }
-
     if (!activePanState || activePanState.tabId !== tabId) {
       if (event.pointerType === 'touch' && touchPointers.has(event.pointerId)) {
         touchPointers.set(event.pointerId, { x: event.clientX, y: event.clientY, tabId });
@@ -2340,11 +2706,6 @@ function setupDrawingHandlers(tabId) {
 
   dom.stage.addEventListener('pointerup', endPan);
   dom.stage.addEventListener('pointercancel', endPan);
-  dom.stage.addEventListener('mouseleave', (event) => {
-    if (appSettings.spotlightEnabled) {
-      updateSpotlightPosition(tabId, event);
-    }
-  });
 }
 
 function applyViewTransform(tabId) {
@@ -2354,19 +2715,6 @@ function applyViewTransform(tabId) {
     return;
   }
   dom.transform.style.transform = `translate(${tabData.viewState.panX}px, ${tabData.viewState.panY}px) scale(${tabData.viewState.scale})`;
-}
-
-function updateSpotlightPosition(tabId, event) {
-  const dom = getTabDom(tabId);
-  if (!dom.stage || !dom.spotlightOverlay) {
-    return;
-  }
-
-  const rect = dom.stage.getBoundingClientRect();
-  const x = clamp(event.clientX - rect.left, 0, rect.width);
-  const y = clamp(event.clientY - rect.top, 0, rect.height);
-  dom.spotlightOverlay.style.setProperty('--spotlight-x', `${x}px`);
-  dom.spotlightOverlay.style.setProperty('--spotlight-y', `${y}px`);
 }
 
 function updateMaskOverlay(tabId) {
@@ -2380,42 +2728,16 @@ function updateMaskOverlay(tabId) {
     return;
   }
 
-  const opacity = clamp(appSettings.maskRevealPercent, 10, 100) / 100;
+  const opacity = clamp(appSettings.maskRevealPercent, 80, 100) / 100;
   dom.maskOverlay.classList.add('active');
   dom.maskOverlay.style.top = '0';
   dom.maskOverlay.style.height = '100%';
   dom.maskOverlay.style.opacity = String(opacity);
 }
 
-function updateSpotlightOverlay(tabId) {
-  const dom = getTabDom(tabId);
-  if (!dom.spotlightOverlay) {
-    return;
-  }
-
-  if (!appSettings.spotlightEnabled) {
-    dom.spotlightOverlay.classList.remove('active');
-    return;
-  }
-
-  dom.spotlightOverlay.classList.add('active');
-  dom.spotlightOverlay.style.setProperty('--spotlight-radius', `${appSettings.spotlightRadius}px`);
-}
-
-function updateFreezeOverlay(tabId) {
-  const dom = getTabDom(tabId);
-  if (!dom.freezeOverlay) {
-    return;
-  }
-
-  dom.freezeOverlay.classList.toggle('active', appSettings.freezeMode);
-}
-
 function updateAllOverlays() {
   tabs.forEach((_, tabId) => {
-    updateSpotlightOverlay(tabId);
     updateMaskOverlay(tabId);
-    updateFreezeOverlay(tabId);
   });
 }
 
@@ -2427,8 +2749,9 @@ function applyInteractionStateToTab(tabId) {
   }
 
   const isSecondarySplit = appSettings.splitMode && appSettings.splitTabId === tabId && activeTabId !== tabId;
-  const canEditText = !appSettings.editLocked && !appSettings.freezeMode && !isSecondarySplit;
+  const canEditText = !appSettings.editLocked && !isSecondarySplit;
   const canInteractDrawing = canEditText && appSettings.activeTool !== 'text';
+  const canInteractCanvasObjects = canEditText && (appSettings.activeTool === 'text' || appSettings.activeTool === 'pan');
 
   dom.chalkboard.contentEditable = canEditText ? 'true' : 'false';
   dom.chalkboard.classList.toggle('locked', !canEditText);
@@ -2439,11 +2762,16 @@ function applyInteractionStateToTab(tabId) {
     dom.canvas.style.pointerEvents = 'none';
   }
 
-  dom.stage.classList.toggle('stage-frozen', appSettings.freezeMode);
+  if (dom.objectLayer) {
+    dom.objectLayer.classList.toggle('interactive', canInteractCanvasObjects);
+    dom.objectLayer.querySelectorAll('.canvas-text-content').forEach((textbox) => {
+      textbox.contentEditable = canEditText ? 'true' : 'false';
+    });
+  }
+
+  dom.stage.classList.remove('stage-frozen');
   applyViewTransform(tabId);
-  updateSpotlightOverlay(tabId);
   updateMaskOverlay(tabId);
-  updateFreezeOverlay(tabId);
 }
 
 function applyAllInteractionStates() {
@@ -2550,18 +2878,6 @@ function setupGlobalDocumentHandlers() {
     if (event.ctrlKey && !event.shiftKey && event.key.toLowerCase() === 'l') {
       event.preventDefault();
       toggleSetting('editLocked');
-      return;
-    }
-
-    if (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === 'f') {
-      event.preventDefault();
-      toggleSetting('freezeMode');
-      return;
-    }
-
-    if (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === 's') {
-      event.preventDefault();
-      toggleSetting('spotlightEnabled');
       return;
     }
 
