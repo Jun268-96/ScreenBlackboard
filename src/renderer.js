@@ -43,7 +43,46 @@ const AUTO_SAVE_INTERVAL = 20000;
 const AUTO_SNAPSHOT_INTERVAL = 120000;
 const LOW_LATENCY_SNAPSHOT_INTERVAL = 300000;
 const SNAPSHOT_LIMIT = 30;
-const LASER_FADE_MS = 3000;
+const LASER_FADE_MS = 900;
+const LASER_TRAIL_GRACE_MS = 500;
+const LASSO_POINT_MIN_DISTANCE = 4;
+const CANVAS_WORLD_MIN_WIDTH = 3200;
+const CANVAS_WORLD_MIN_HEIGHT = 2000;
+const CANVAS_WORLD_WIDTH_MULTIPLIER = 2;
+const CANVAS_WORLD_HEIGHT_MULTIPLIER = 2;
+const CANVAS_WORLD_MAX_WIDTH = 5200;
+const CANVAS_WORLD_MAX_HEIGHT = 3200;
+const CANVAS_WORLD_EXPAND_STEP = 480;
+const CANVAS_WORLD_AUTO_EXPAND_THRESHOLD = 240;
+const UNDO_HISTORY_LIMIT = 24;
+const UNDO_CAPTURE_DEBOUNCE_MS = 260;
+const CANVAS_TEXT_COLOR_PRESETS = {
+  red: '#dc2626',
+  blue: '#1d4ed8'
+};
+const TEXT_BOX_BG_PRESET_COLORS = ['#ffffff', '#fff7cc', '#ffe4e6', '#dbeafe', '#dcfce7', '#ede9fe'];
+const TOOL_KEYPAD_SHORTCUTS = {
+  Digit1: 'pan',
+  Numpad1: 'pan',
+  Digit2: 'pen',
+  Numpad2: 'pen',
+  Digit3: 'highlighter',
+  Numpad3: 'highlighter',
+  Digit4: 'eraser',
+  Numpad4: 'eraser',
+  Digit5: 'line',
+  Numpad5: 'line',
+  Digit6: 'arrow',
+  Numpad6: 'arrow',
+  Digit7: 'rect',
+  Numpad7: 'rect',
+  Digit8: 'circle',
+  Numpad8: 'circle',
+  Digit9: 'lasso',
+  Numpad9: 'lasso',
+  Digit0: 'laser',
+  Numpad0: 'laser'
+};
 const FONT_SIZE_STEPS = [8, 10, 12, 14, 16, 18, 20, 24, 28, 32, 36, 42, 48, 56, 64, 72, 84, 96, 112, 128, 144, 160, 180, 200];
 
 let tabs = new Map();
@@ -60,11 +99,16 @@ let autosnapshotTimer = null;
 let debouncedSaveTimer = null;
 let persistChain = Promise.resolve();
 let isRestoringSnapshot = false;
+let isApplyingUndoRedo = false;
 let activePanState = null;
 let touchPointers = new Map();
 let penPointers = new Set();
 let drawingStates = new Map();
 let laserStates = new Map();
+let lassoStates = new Map();
+let undoStack = [];
+let redoStack = [];
+let undoCaptureTimer = null;
 let startupRecoveryFinished = false;
 let hasUnsavedChanges = false;
 
@@ -81,7 +125,9 @@ class TabData {
     this.viewState = {
       scale: 1,
       panX: 0,
-      panY: 0
+      panY: 0,
+      worldWidth: null,
+      worldHeight: null
     };
   }
 }
@@ -149,7 +195,9 @@ function getTabDom(tabId) {
     chalkboard: document.querySelector(`.chalkboard[data-tab-id="${tabId}"]`),
     canvas: document.querySelector(`.drawing-canvas[data-tab-id="${tabId}"]`),
     laserCanvas: document.querySelector(`.laser-canvas[data-tab-id="${tabId}"]`),
+    lassoCanvas: document.querySelector(`.lasso-canvas[data-tab-id="${tabId}"]`),
     objectLayer: document.querySelector(`.canvas-object-layer[data-tab-id="${tabId}"]`),
+    textInlineToolbar: document.querySelector(`.canvas-text-inline-toolbar[data-tab-id="${tabId}"]`),
     maskOverlay: document.querySelector(`.mask-overlay[data-tab-id="${tabId}"]`)
   };
 }
@@ -230,37 +278,6 @@ function createCanvasObjectId() {
   return `obj-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
 }
 
-function normalizeVideoEmbedUrl(rawUrl) {
-  let parsed;
-  try {
-    parsed = new URL(rawUrl);
-  } catch (error) {
-    return null;
-  }
-
-  const host = parsed.hostname.toLowerCase();
-  if (host.includes('youtube.com')) {
-    const videoId = parsed.searchParams.get('v');
-    if (videoId) {
-      return `https://www.youtube.com/embed/${videoId}`;
-    }
-
-    const pathParts = parsed.pathname.split('/').filter(Boolean);
-    if (pathParts[0] === 'shorts' && pathParts[1]) {
-      return `https://www.youtube.com/embed/${pathParts[1]}`;
-    }
-  }
-
-  if (host.includes('youtu.be')) {
-    const videoId = parsed.pathname.split('/').filter(Boolean)[0];
-    if (videoId) {
-      return `https://www.youtube.com/embed/${videoId}`;
-    }
-  }
-
-  return parsed.toString();
-}
-
 function createCanvasObjectElement(item) {
   const object = document.createElement('div');
   object.className = `canvas-object canvas-object-${item.type}`;
@@ -271,11 +288,28 @@ function createCanvasObjectElement(item) {
   object.style.width = `${clamp(Math.round(Number(item.width) || 320), 120, 1600)}px`;
   object.style.height = `${clamp(Math.round(Number(item.height) || 220), 80, 1200)}px`;
 
-  const label = item.type === 'image' ? '이미지' : item.type === 'video' ? '영상' : '텍스트';
+  const label = item.type === 'image' ? '이미지' : '텍스트';
+  const isTextObject = item.type === 'text';
+  const textBgColor = isTextObject ? (item.bgColor || '#ffffff') : '';
+  if (isTextObject) {
+    object.dataset.bgColor = textBgColor;
+  }
+  const bgPaletteButtons = TEXT_BOX_BG_PRESET_COLORS
+    .map((color) => `<button type="button" class="canvas-object-bg-chip" data-color="${color}" style="background-color: ${color};" title="${color}"></button>`)
+    .join('');
+  const textActions = isTextObject
+    ? `
+      <button type="button" class="canvas-object-bg-toggle" title="텍스트 박스 배경색">색상</button>
+      <div class="canvas-object-bg-palette">${bgPaletteButtons}</div>
+    `
+    : '';
   object.innerHTML = `
     <div class="canvas-object-handle">
-      <span>${label}</span>
-      <button type="button" class="canvas-object-remove" title="삭제">&times;</button>
+      <span class="canvas-object-title">${label}</span>
+      <div class="canvas-object-actions">
+        ${textActions}
+        <button type="button" class="canvas-object-remove" title="삭제">&times;</button>
+      </div>
     </div>
     <div class="canvas-object-body"></div>
     <button type="button" class="canvas-object-resize" title="크기 조절"></button>
@@ -287,13 +321,8 @@ function createCanvasObjectElement(item) {
     image.src = item.src || '';
     image.alt = '캔버스 이미지';
     body.appendChild(image);
-  } else if (item.type === 'video') {
-    const iframe = document.createElement('iframe');
-    iframe.src = item.src || '';
-    iframe.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share';
-    iframe.allowFullscreen = true;
-    body.appendChild(iframe);
   } else {
+    body.style.backgroundColor = textBgColor || '#ffffff';
     const text = document.createElement('div');
     text.className = 'canvas-text-content';
     text.contentEditable = 'true';
@@ -314,6 +343,9 @@ function syncCanvasItemsFromDom(tabId) {
   const items = [];
   dom.objectLayer.querySelectorAll('.canvas-object').forEach((object) => {
     const type = object.dataset.itemType;
+    if (type !== 'image' && type !== 'text') {
+      return;
+    }
     const width = parseFloat(object.style.width) || object.offsetWidth || 320;
     const height = parseFloat(object.style.height) || object.offsetHeight || 220;
     const item = {
@@ -327,10 +359,9 @@ function syncCanvasItemsFromDom(tabId) {
 
     if (type === 'image') {
       item.src = object.querySelector('img')?.src || '';
-    } else if (type === 'video') {
-      item.src = object.querySelector('iframe')?.src || '';
     } else {
       item.html = object.querySelector('.canvas-text-content')?.innerHTML || '';
+      item.bgColor = object.dataset.bgColor || '#ffffff';
     }
 
     items.push(item);
@@ -348,6 +379,9 @@ function restoreCanvasItems(tabId) {
 
   dom.objectLayer.innerHTML = '';
   (tabData.canvasItems || []).forEach((item) => {
+    if (item?.type !== 'image' && item?.type !== 'text') {
+      return;
+    }
     dom.objectLayer.appendChild(createCanvasObjectElement(item));
   });
 }
@@ -358,6 +392,9 @@ function addCanvasItem(tabId, item) {
   }
   const dom = getTabDom(tabId);
   if (!dom.objectLayer) {
+    return;
+  }
+  if (item?.type !== 'image' && item?.type !== 'text') {
     return;
   }
   dom.objectLayer.appendChild(createCanvasObjectElement(item));
@@ -377,23 +414,6 @@ function addCanvasImageFromData(tabId, dataUrl) {
   });
 }
 
-function addCanvasVideoFromUrl(tabId, rawUrl) {
-  const embedUrl = normalizeVideoEmbedUrl(rawUrl);
-  if (!embedUrl) {
-    return false;
-  }
-  addCanvasItem(tabId, {
-    id: createCanvasObjectId(),
-    type: 'video',
-    x: 120,
-    y: 120,
-    width: 560,
-    height: 320,
-    src: embedUrl
-  });
-  return true;
-}
-
 function addCanvasTextBox(tabId) {
   addCanvasItem(tabId, {
     id: createCanvasObjectId(),
@@ -402,7 +422,8 @@ function addCanvasTextBox(tabId) {
     y: 90,
     width: 360,
     height: 220,
-    html: '텍스트 입력'
+    html: '텍스트 입력',
+    bgColor: '#ffffff'
   });
 }
 
@@ -427,10 +448,11 @@ function clearCanvasTabContent(tabId) {
 
   const laserState = laserStates.get(tabId);
   if (laserState) {
-    laserState.segments = [];
     laserState.isDrawing = false;
     laserState.pointerId = null;
     laserState.lastPoint = null;
+    laserState.lastFrameAt = 0;
+    laserState.trailUntil = 0;
     if (laserState.rafId) {
       cancelAnimationFrame(laserState.rafId);
       laserState.rafId = null;
@@ -439,6 +461,19 @@ function clearCanvasTabContent(tabId) {
   if (dom.laserCanvas) {
     const laserCtx = dom.laserCanvas.getContext('2d');
     laserCtx?.clearRect(0, 0, dom.laserCanvas.width, dom.laserCanvas.height);
+  }
+
+  const lassoState = lassoStates.get(tabId);
+  if (lassoState) {
+    lassoState.mode = 'idle';
+    lassoState.points = [];
+    lassoState.selectionCanvas = null;
+    lassoState.selectionWidth = 0;
+    lassoState.selectionHeight = 0;
+  }
+  if (dom.lassoCanvas) {
+    const lassoCtx = dom.lassoCanvas.getContext('2d');
+    lassoCtx?.clearRect(0, 0, dom.lassoCanvas.width, dom.lassoCanvas.height);
   }
 
   tabData.drawingData = null;
@@ -481,6 +516,10 @@ function setActiveTool(tool, options = {}) {
     return;
   }
 
+  if (tool !== 'lasso' && activeTabId && isCanvasTab(activeTabId)) {
+    commitLassoSelection(activeTabId, { markDirty: false });
+  }
+
   appSettings.activeTool = tool;
   syncDrawControls();
   applyAllInteractionStates();
@@ -497,10 +536,355 @@ function setupCanvasObjectLayerHandlers(tabId) {
   dom.objectLayer.dataset.bound = 'true';
 
   let dragState = null;
+  let inlineRange = null;
+  let inlineTextHost = null;
+  let suppressInlineSelectionUpdates = false;
+
+  const closeAllTextBgPalettes = () => {
+    dom.objectLayer.querySelectorAll('.canvas-object-bg-palette.show').forEach((panel) => {
+      panel.classList.remove('show');
+    });
+  };
+
+  const getTextContentForRange = (range) => {
+    if (!range) {
+      return null;
+    }
+    const containerElement = range.commonAncestorContainer instanceof Element
+      ? range.commonAncestorContainer
+      : range.commonAncestorContainer?.parentElement;
+    const textContent = containerElement?.closest('.canvas-text-content');
+    if (!textContent || !dom.objectLayer.contains(textContent)) {
+      return null;
+    }
+    return textContent;
+  };
+
+  const cacheInlineSelectionFromWindow = () => {
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
+      return false;
+    }
+
+    const range = selection.getRangeAt(0);
+    const textContent = getTextContentForRange(range);
+    if (!textContent) {
+      return false;
+    }
+
+    inlineRange = range.cloneRange();
+    inlineTextHost = textContent;
+    return true;
+  };
+
+  const restoreInlineSelection = () => {
+    if (!inlineRange || !inlineTextHost) {
+      return false;
+    }
+
+    inlineTextHost.focus({ preventScroll: true });
+    const selection = window.getSelection();
+    if (!selection) {
+      return false;
+    }
+
+    selection.removeAllRanges();
+    selection.addRange(inlineRange.cloneRange());
+    return selection.rangeCount > 0;
+  };
+
+  const getSelectedTextNodes = (range) => {
+    if (!range) {
+      return [];
+    }
+    const root = range.commonAncestorContainer;
+    const walker = document.createTreeWalker(
+      root,
+      NodeFilter.SHOW_TEXT,
+      {
+        acceptNode: (node) => {
+          if (!node?.nodeValue || node.nodeValue.trim().length === 0) {
+            return NodeFilter.FILTER_REJECT;
+          }
+          try {
+            return range.intersectsNode(node)
+              ? NodeFilter.FILTER_ACCEPT
+              : NodeFilter.FILTER_REJECT;
+          } catch (error) {
+            return NodeFilter.FILTER_REJECT;
+          }
+        }
+      }
+    );
+
+    const nodes = [];
+    if (root.nodeType === Node.TEXT_NODE && root.nodeValue?.trim().length > 0) {
+      nodes.push(root);
+    }
+    while (walker.nextNode()) {
+      nodes.push(walker.currentNode);
+    }
+    return nodes;
+  };
+
+  const isSelectionStyled = (range, checker) => {
+    const textNodes = getSelectedTextNodes(range);
+    if (textNodes.length === 0) {
+      return false;
+    }
+    return textNodes.every((node) => {
+      const host = node.parentElement || inlineTextHost;
+      if (!host) {
+        return false;
+      }
+      return checker(window.getComputedStyle(host));
+    });
+  };
+
+  const clearInlineStyleProperty = (rootNode, property) => {
+    const kebab = property.replace(/[A-Z]/g, (ch) => `-${ch.toLowerCase()}`);
+    const traverse = (node) => {
+      if (node.nodeType === Node.ELEMENT_NODE) {
+        node.style?.removeProperty(kebab);
+        if (node.getAttribute && node.getAttribute('style') === '') {
+          node.removeAttribute('style');
+        }
+      }
+      node.childNodes?.forEach((child) => traverse(child));
+    };
+    traverse(rootNode);
+  };
+
+  const applyInlineStyleToSelection = (style, clearKeys = []) => {
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0) {
+      return false;
+    }
+
+    const range = selection.getRangeAt(0);
+    if (range.collapsed) {
+      return false;
+    }
+
+    const textContent = getTextContentForRange(range);
+    if (!textContent) {
+      return false;
+    }
+
+    const fragment = range.extractContents();
+    clearKeys.forEach((key) => clearInlineStyleProperty(fragment, key));
+    const span = document.createElement('span');
+    Object.assign(span.style, style);
+    span.appendChild(fragment);
+    range.insertNode(span);
+
+    const nextRange = document.createRange();
+    nextRange.selectNodeContents(span);
+    selection.removeAllRanges();
+    selection.addRange(nextRange);
+    inlineRange = nextRange.cloneRange();
+    inlineTextHost = textContent;
+    return true;
+  };
+
+  const hideInlineTextToolbar = (clearSelection = false) => {
+    if (!dom.textInlineToolbar) {
+      return;
+    }
+    dom.textInlineToolbar.classList.remove('show');
+    if (clearSelection) {
+      inlineRange = null;
+      inlineTextHost = null;
+    }
+  };
+
+  const updateInlineTextToolbar = () => {
+    const toolbar = dom.textInlineToolbar;
+    if (!toolbar) {
+      return;
+    }
+
+    if (activeTabId !== tabId || appSettings.editLocked) {
+      hideInlineTextToolbar(true);
+      return;
+    }
+
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
+      hideInlineTextToolbar(false);
+      return;
+    }
+
+    const range = selection.getRangeAt(0);
+    const textContent = getTextContentForRange(range);
+
+    if (!textContent) {
+      hideInlineTextToolbar(false);
+      return;
+    }
+
+    const candidateRect = range.getBoundingClientRect();
+    const rect = (candidateRect.width > 0 || candidateRect.height > 0)
+      ? candidateRect
+      : range.getClientRects()?.[0];
+    if (!rect) {
+      hideInlineTextToolbar(false);
+      return;
+    }
+
+    const stageRect = dom.stage.getBoundingClientRect();
+    const halfWidth = 120;
+    const x = clamp(
+      (rect.left + (rect.width / 2)) - stageRect.left,
+      halfWidth,
+      Math.max(halfWidth, stageRect.width - halfWidth)
+    );
+    const y = clamp(
+      rect.top - stageRect.top - 12,
+      8,
+      Math.max(8, stageRect.height - 8)
+    );
+
+    toolbar.style.left = `${x}px`;
+    toolbar.style.top = `${y}px`;
+    toolbar.classList.add('show');
+    inlineRange = range.cloneRange();
+    inlineTextHost = textContent;
+  };
+
+  if (dom.textInlineToolbar && dom.textInlineToolbar.dataset.bound !== 'true') {
+    const toolbar = dom.textInlineToolbar;
+    toolbar.dataset.bound = 'true';
+
+    toolbar.addEventListener('mousedown', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      suppressInlineSelectionUpdates = true;
+      cacheInlineSelectionFromWindow();
+    });
+
+    toolbar.addEventListener('pointerdown', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      suppressInlineSelectionUpdates = true;
+      cacheInlineSelectionFromWindow();
+    });
+
+    toolbar.addEventListener('click', (event) => {
+      if (appSettings.editLocked) {
+        suppressInlineSelectionUpdates = false;
+        return;
+      }
+
+      const target = event.target instanceof Element ? event.target : null;
+      const button = target?.closest('.canvas-inline-tool-btn');
+      if (!button) {
+        suppressInlineSelectionUpdates = false;
+        return;
+      }
+
+      if (!cacheInlineSelectionFromWindow() && !inlineRange) {
+        suppressInlineSelectionUpdates = false;
+        return;
+      }
+
+      if (!restoreInlineSelection()) {
+        suppressInlineSelectionUpdates = false;
+        return;
+      }
+
+      const action = button.dataset.action;
+      let applied = false;
+      if (action === 'bold') {
+        const selection = window.getSelection();
+        const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
+        const isBold = isSelectionStyled(range, (computed) => {
+          const weight = Number.parseInt(computed.fontWeight, 10);
+          return computed.fontWeight === 'bold' || Number.isFinite(weight) && weight >= 600;
+        });
+        applied = applyInlineStyleToSelection(
+          { fontWeight: isBold ? '400' : '700' },
+          ['fontWeight']
+        );
+      } else if (action === 'italic') {
+        const selection = window.getSelection();
+        const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
+        const isItalic = isSelectionStyled(range, (computed) => computed.fontStyle === 'italic' || computed.fontStyle === 'oblique');
+        applied = applyInlineStyleToSelection(
+          { fontStyle: isItalic ? 'normal' : 'italic' },
+          ['fontStyle']
+        );
+      } else if (action === 'color') {
+        const colorKey = button.dataset.color;
+        const color = CANVAS_TEXT_COLOR_PRESETS[colorKey];
+        if (color) {
+          const targetColor = colorToRgba(color, 1).replace(', 1)', ')').replace('rgba', 'rgb');
+          const selection = window.getSelection();
+          const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
+          const isTargetColor = isSelectionStyled(range, (computed) => computed.color.replace(/\s+/g, '') === targetColor.replace(/\s+/g, ''));
+          applied = applyInlineStyleToSelection(
+            { color: isTargetColor ? '#111827' : color },
+            ['color']
+          );
+        }
+      }
+
+      if (!applied) {
+        suppressInlineSelectionUpdates = false;
+        return;
+      }
+
+      syncCanvasItemsFromDom(tabId);
+      markDirty();
+      setTimeout(() => {
+        suppressInlineSelectionUpdates = false;
+        updateInlineTextToolbar();
+      }, 0);
+    });
+  }
 
   dom.objectLayer.addEventListener('click', (event) => {
-    const removeButton = event.target.closest('.canvas-object-remove');
+    const target = event.target instanceof Element ? event.target : null;
+    if (!target) {
+      return;
+    }
+
+    const removeButton = target.closest('.canvas-object-remove');
     if (!removeButton) {
+      const bgToggle = target.closest('.canvas-object-bg-toggle');
+      if (bgToggle) {
+        const object = bgToggle.closest('.canvas-object');
+        const palette = object?.querySelector('.canvas-object-bg-palette');
+        if (!palette) {
+          return;
+        }
+        const shouldOpen = !palette.classList.contains('show');
+        closeAllTextBgPalettes();
+        palette.classList.toggle('show', shouldOpen);
+        return;
+      }
+
+      const bgChip = target.closest('.canvas-object-bg-chip');
+      if (bgChip) {
+        const object = bgChip.closest('.canvas-object');
+        const color = bgChip.dataset.color;
+        if (!object || !color) {
+          return;
+        }
+        object.dataset.bgColor = color;
+        const body = object.querySelector('.canvas-object-body');
+        if (body) {
+          body.style.backgroundColor = color;
+        }
+        closeAllTextBgPalettes();
+        syncCanvasItemsFromDom(tabId);
+        markDirty();
+        return;
+      }
+
+      if (!target.closest('.canvas-object-bg-palette')) {
+        closeAllTextBgPalettes();
+      }
       return;
     }
     const object = removeButton.closest('.canvas-object');
@@ -515,6 +899,52 @@ function setupCanvasObjectLayerHandlers(tabId) {
     }
     syncCanvasItemsFromDom(tabId);
     markDirty(false);
+    setTimeout(updateInlineTextToolbar, 0);
+  });
+
+  dom.objectLayer.addEventListener('mouseup', () => {
+    setTimeout(updateInlineTextToolbar, 0);
+  });
+
+  dom.objectLayer.addEventListener('keyup', (event) => {
+    if (event.target.closest('.canvas-text-content')) {
+      setTimeout(updateInlineTextToolbar, 0);
+    }
+  });
+
+  dom.objectLayer.addEventListener('scroll', (event) => {
+    if (event.target.closest('.canvas-text-content')) {
+      setTimeout(updateInlineTextToolbar, 0);
+    }
+  }, true);
+
+  document.addEventListener('selectionchange', () => {
+    if (activeTabId !== tabId) {
+      return;
+    }
+    if (suppressInlineSelectionUpdates) {
+      return;
+    }
+    updateInlineTextToolbar();
+  });
+
+  document.addEventListener('pointerdown', (event) => {
+    if (activeTabId !== tabId) {
+      return;
+    }
+    const target = event.target instanceof Element ? event.target : null;
+    if (!target) {
+      hideInlineTextToolbar(true);
+      closeAllTextBgPalettes();
+      return;
+    }
+    if (target.closest(`.canvas-text-inline-toolbar[data-tab-id="${tabId}"]`) || target.closest('.canvas-text-content')) {
+      return;
+    }
+    hideInlineTextToolbar(true);
+    if (!target.closest('.canvas-object-bg-toggle') && !target.closest('.canvas-object-bg-palette')) {
+      closeAllTextBgPalettes();
+    }
   });
 
   dom.objectLayer.addEventListener('pointerdown', (event) => {
@@ -522,17 +952,27 @@ function setupCanvasObjectLayerHandlers(tabId) {
       return;
     }
 
-    if (event.target.closest('.canvas-object-remove')) {
+    const target = event.target instanceof Element ? event.target : null;
+    if (!target) {
+      return;
+    }
+
+    if (target.closest('.canvas-object-bg-toggle') || target.closest('.canvas-object-bg-palette')) {
       event.stopPropagation();
       return;
     }
 
-    if (event.target.closest('.canvas-text-content')) {
+    if (target.closest('.canvas-object-remove')) {
+      event.stopPropagation();
       return;
     }
 
-    const resizeHandle = event.target.closest('.canvas-object-resize');
-    const handle = event.target.closest('.canvas-object-handle');
+    if (target.closest('.canvas-text-content')) {
+      return;
+    }
+
+    const resizeHandle = target.closest('.canvas-object-resize');
+    const handle = target.closest('.canvas-object-handle');
     if (!handle && !resizeHandle) {
       return;
     }
@@ -541,18 +981,23 @@ function setupCanvasObjectLayerHandlers(tabId) {
       return;
     }
 
-    const stageRect = dom.stage.getBoundingClientRect();
-    const objectRect = object.getBoundingClientRect();
+    hideInlineTextToolbar(true);
+    closeAllTextBgPalettes();
+
+    const pointerPoint = getPointerPointInCanvas(tabId, event);
+    const objectLeft = parseFloat(object.style.left) || 0;
+    const objectTop = parseFloat(object.style.top) || 0;
+    const objectWidth = parseFloat(object.style.width) || object.offsetWidth || 320;
+    const objectHeight = parseFloat(object.style.height) || object.offsetHeight || 220;
     if (resizeHandle) {
       dragState = {
         mode: 'resize',
         pointerId: event.pointerId,
         object,
-        stageRect,
-        startX: event.clientX,
-        startY: event.clientY,
-        startWidth: objectRect.width,
-        startHeight: objectRect.height
+        startPointerX: pointerPoint.x,
+        startPointerY: pointerPoint.y,
+        startWidth: objectWidth,
+        startHeight: objectHeight
       };
       object.classList.add('resizing');
     } else {
@@ -560,9 +1005,8 @@ function setupCanvasObjectLayerHandlers(tabId) {
         mode: 'move',
         pointerId: event.pointerId,
         object,
-        stageRect,
-        offsetX: event.clientX - objectRect.left,
-        offsetY: event.clientY - objectRect.top
+        offsetX: pointerPoint.x - objectLeft,
+        offsetY: pointerPoint.y - objectTop
       };
       object.classList.add('dragging');
     }
@@ -577,20 +1021,27 @@ function setupCanvasObjectLayerHandlers(tabId) {
       return;
     }
 
+    const tabData = tabs.get(tabId);
+    const pointerPoint = getPointerPointInCanvas(tabId, event);
+    const worldWidth = Number(tabData?.viewState?.worldWidth) || dom.objectLayer.clientWidth || dom.stage.clientWidth || 1;
+    const worldHeight = Number(tabData?.viewState?.worldHeight) || dom.objectLayer.clientHeight || dom.stage.clientHeight || 1;
+
     if (dragState.mode === 'resize') {
       const left = parseFloat(dragState.object.style.left) || 0;
       const top = parseFloat(dragState.object.style.top) || 0;
-      const maxWidth = Math.max(140, dragState.stageRect.width - left);
-      const maxHeight = Math.max(100, dragState.stageRect.height - top);
-      const nextWidth = clamp(dragState.startWidth + (event.clientX - dragState.startX), 140, maxWidth);
-      const nextHeight = clamp(dragState.startHeight + (event.clientY - dragState.startY), 100, maxHeight);
+      const maxWidth = Math.max(140, worldWidth - left);
+      const maxHeight = Math.max(100, worldHeight - top);
+      const nextWidth = clamp(dragState.startWidth + (pointerPoint.x - dragState.startPointerX), 140, maxWidth);
+      const nextHeight = clamp(dragState.startHeight + (pointerPoint.y - dragState.startPointerY), 100, maxHeight);
       dragState.object.style.width = `${Math.round(nextWidth)}px`;
       dragState.object.style.height = `${Math.round(nextHeight)}px`;
     } else {
-      const maxX = Math.max(0, dragState.stageRect.width - dragState.object.offsetWidth);
-      const maxY = Math.max(0, dragState.stageRect.height - dragState.object.offsetHeight);
-      const x = clamp(event.clientX - dragState.stageRect.left - dragState.offsetX, 0, maxX);
-      const y = clamp(event.clientY - dragState.stageRect.top - dragState.offsetY, 0, maxY);
+      const objectWidth = parseFloat(dragState.object.style.width) || dragState.object.offsetWidth || 320;
+      const objectHeight = parseFloat(dragState.object.style.height) || dragState.object.offsetHeight || 220;
+      const maxX = Math.max(0, worldWidth - objectWidth);
+      const maxY = Math.max(0, worldHeight - objectHeight);
+      const x = clamp(pointerPoint.x - dragState.offsetX, 0, maxX);
+      const y = clamp(pointerPoint.y - dragState.offsetY, 0, maxY);
       dragState.object.style.left = `${Math.round(x)}px`;
       dragState.object.style.top = `${Math.round(y)}px`;
     }
@@ -631,6 +1082,11 @@ function parseColorToRgb(color) {
   const b = parseInt(value.slice(4, 6), 16) / 255;
 
   return { r, g, b };
+}
+
+function colorToRgba(color, alpha = 1) {
+  const { r, g, b } = parseColorToRgb(color || '#ffffff');
+  return `rgba(${Math.round(r * 255)}, ${Math.round(g * 255)}, ${Math.round(b * 255)}, ${clamp(alpha, 0, 1)})`;
 }
 
 function relativeLuminance(color) {
@@ -699,6 +1155,159 @@ function captureSnapshotState() {
     timetable: captureTimetableItems(),
     settings: { ...appSettings }
   };
+}
+
+function cloneSerializableState(value) {
+  if (typeof structuredClone === 'function') {
+    return structuredClone(value);
+  }
+  return JSON.parse(JSON.stringify(value));
+}
+
+function captureUndoHistoryState() {
+  const snapshot = captureSnapshotState();
+  return {
+    activeTabId: snapshot.activeTabId,
+    tabCounter: snapshot.tabCounter,
+    tabs: cloneSerializableState(snapshot.tabs || {}),
+    timetable: cloneSerializableState(snapshot.timetable || []),
+    settings: cloneSerializableState(snapshot.settings || {})
+  };
+}
+
+function resetUndoHistory() {
+  undoStack = [];
+  redoStack = [];
+  if (undoCaptureTimer) {
+    clearTimeout(undoCaptureTimer);
+    undoCaptureTimer = null;
+  }
+}
+
+function pushUndoCheckpoint(options = {}) {
+  if (isRestoringSnapshot || isApplyingUndoRedo) {
+    return;
+  }
+
+  undoStack.push(captureUndoHistoryState());
+  if (undoStack.length > UNDO_HISTORY_LIMIT) {
+    undoStack = undoStack.slice(undoStack.length - UNDO_HISTORY_LIMIT);
+  }
+
+  if (!options.keepRedo) {
+    redoStack = [];
+  }
+}
+
+function scheduleUndoCheckpoint() {
+  if (isRestoringSnapshot || isApplyingUndoRedo) {
+    return;
+  }
+
+  if (undoCaptureTimer) {
+    clearTimeout(undoCaptureTimer);
+  }
+  undoCaptureTimer = setTimeout(() => {
+    undoCaptureTimer = null;
+    pushUndoCheckpoint();
+  }, UNDO_CAPTURE_DEBOUNCE_MS);
+}
+
+function flushPendingUndoCheckpoint() {
+  if (!undoCaptureTimer) {
+    return;
+  }
+  clearTimeout(undoCaptureTimer);
+  undoCaptureTimer = null;
+  pushUndoCheckpoint();
+}
+
+async function applyCapturedState(state) {
+  if (!state) {
+    return false;
+  }
+
+  isRestoringSnapshot = true;
+  isApplyingUndoRedo = true;
+
+  try {
+    tabs.clear();
+    tabCounter = 0;
+    activeTabId = null;
+    drawingStates.clear();
+    laserStates.clear();
+    lassoStates.clear();
+
+    document.querySelector('.tabs-wrapper').innerHTML = '';
+    document.getElementById('tabContents').innerHTML = '';
+
+    const snapshotTabs = state.tabs || {};
+    Object.values(snapshotTabs).forEach((tabObj) => {
+      createTab(tabObj.title || '칠판', {
+        id: tabObj.id,
+        data: tabObj,
+        silent: true
+      });
+    });
+
+    const restoreTabId = state.activeTabId && tabs.has(state.activeTabId)
+      ? state.activeTabId
+      : tabs.keys().next().value;
+    if (restoreTabId) {
+      switchToTab(restoreTabId);
+    }
+    tabCounter = state.tabCounter || tabCounter;
+
+    const timetableList = document.getElementById('timetableList');
+    timetableList.innerHTML = '';
+    const snapshotTimetable = Array.isArray(state.timetable) ? state.timetable : [];
+    snapshotTimetable.forEach((item, index) => appendTimetableItem(item, index));
+    updateTimetableLayout();
+
+    if (state.settings) {
+      appSettings = { ...appSettings, ...cloneSerializableState(state.settings) };
+      applySettingsToUI();
+    }
+
+    await queuePersist({ skipSnapshot: true, force: true });
+    return true;
+  } catch (error) {
+    console.error('Undo/redo apply failed:', error);
+    return false;
+  } finally {
+    isRestoringSnapshot = false;
+    isApplyingUndoRedo = false;
+  }
+}
+
+async function undoLastChange() {
+  flushPendingUndoCheckpoint();
+  if (undoStack.length <= 1) {
+    return false;
+  }
+
+  const current = undoStack.pop();
+  redoStack.push(current);
+  if (redoStack.length > UNDO_HISTORY_LIMIT) {
+    redoStack = redoStack.slice(redoStack.length - UNDO_HISTORY_LIMIT);
+  }
+
+  const previous = undoStack[undoStack.length - 1];
+  return applyCapturedState(cloneSerializableState(previous));
+}
+
+async function redoLastUndo() {
+  if (redoStack.length === 0) {
+    return false;
+  }
+
+  const next = redoStack.pop();
+  undoStack.push(next);
+  if (undoStack.length > UNDO_HISTORY_LIMIT) {
+    undoStack = undoStack.slice(undoStack.length - UNDO_HISTORY_LIMIT);
+  }
+
+  return applyCapturedState(cloneSerializableState(next));
 }
 
 async function saveAllTabsData() {
@@ -927,12 +1536,15 @@ async function restoreSnapshot(snapshotId, options = {}) {
   }
 
   isRestoringSnapshot = true;
+  let restored = false;
 
   try {
     tabs.clear();
     tabCounter = 0;
     activeTabId = null;
     drawingStates.clear();
+    laserStates.clear();
+    lassoStates.clear();
 
     document.querySelector('.tabs-wrapper').innerHTML = '';
     document.getElementById('tabContents').innerHTML = '';
@@ -963,10 +1575,15 @@ async function restoreSnapshot(snapshotId, options = {}) {
     }
 
     await queuePersist({ skipSnapshot: true, force: true });
+    restored = true;
   } catch (error) {
     console.error('Snapshot restore failed:', error);
   } finally {
     isRestoringSnapshot = false;
+    if (restored) {
+      resetUndoHistory();
+      pushUndoCheckpoint();
+    }
     if (!options.silent) {
       document.getElementById('snapshotPanel').classList.add('hidden');
     }
@@ -1025,13 +1642,14 @@ function renderSnapshotTimeline() {
 }
 
 function markDirty(shouldSchedulePersist = true) {
-  if (isRestoringSnapshot) {
+  if (isRestoringSnapshot || isApplyingUndoRedo) {
     return;
   }
 
   hasUnsavedChanges = true;
 
   if (shouldSchedulePersist) {
+    scheduleUndoCheckpoint();
     clearTimeout(debouncedSaveTimer);
     const delay = appSettings.lowLatencyMode ? 1800 : 900;
     debouncedSaveTimer = setTimeout(() => {
@@ -1499,10 +2117,17 @@ function createTab(title, options = {}) {
     tabData.drawingData = options.data.drawingData || null;
     tabData.canvasItems = Array.isArray(options.data.canvasItems) ? options.data.canvasItems : [];
     tabData.backgroundPreset = options.data.backgroundPreset || 'plain';
+    const savedScale = Number(options.data.viewState?.scale);
+    const savedPanX = Number(options.data.viewState?.panX);
+    const savedPanY = Number(options.data.viewState?.panY);
+    const savedWorldWidth = Number(options.data.viewState?.worldWidth);
+    const savedWorldHeight = Number(options.data.viewState?.worldHeight);
     tabData.viewState = {
-      scale: options.data.viewState?.scale || 1,
-      panX: options.data.viewState?.panX || 0,
-      panY: options.data.viewState?.panY || 0
+      scale: Number.isFinite(savedScale) && savedScale > 0 ? savedScale : 1,
+      panX: Number.isFinite(savedPanX) ? savedPanX : 0,
+      panY: Number.isFinite(savedPanY) ? savedPanY : 0,
+      worldWidth: Number.isFinite(savedWorldWidth) ? Math.round(savedWorldWidth) : null,
+      worldHeight: Number.isFinite(savedWorldHeight) ? Math.round(savedWorldHeight) : null
     };
   }
 
@@ -1618,21 +2243,21 @@ function createTabContent(tabId) {
       <div class="draw-controls">
         ${isCanvas ? `
         <div class="canvas-tool-palette">
-          <button class="canvas-palette-btn" data-tool="pen" title="펜">펜</button>
-          <button class="canvas-palette-btn" data-tool="laser" title="레이저 포인터">레이저</button>
-          <button class="canvas-palette-btn" data-tool="highlighter" title="형광펜">형광</button>
-          <button class="canvas-palette-btn" data-tool="eraser" title="지우개">지우개</button>
-          <button class="canvas-palette-btn" data-tool="line" title="직선">직선</button>
-          <button class="canvas-palette-btn" data-tool="arrow" title="화살표">화살표</button>
-          <button class="canvas-palette-btn" data-tool="rect" title="사각형">사각형</button>
-          <button class="canvas-palette-btn" data-tool="circle" title="원">원</button>
-          <button class="canvas-palette-btn" data-tool="pan" title="이동/줌">이동</button>
+          <button class="canvas-palette-btn" data-tool="pan" title="1: 이동/줌">이동</button>
+          <button class="canvas-palette-btn" data-tool="pen" title="2: 펜">펜</button>
+          <button class="canvas-palette-btn" data-tool="highlighter" title="3: 형광펜">형광</button>
+          <button class="canvas-palette-btn" data-tool="eraser" title="4: 지우개">지우개</button>
+          <button class="canvas-palette-btn" data-tool="line" title="5: 직선">직선</button>
+          <button class="canvas-palette-btn" data-tool="arrow" title="6: 화살표">화살표</button>
+          <button class="canvas-palette-btn" data-tool="rect" title="7: 사각형">사각형</button>
+          <button class="canvas-palette-btn" data-tool="circle" title="8: 원">원</button>
+          <button class="canvas-palette-btn" data-tool="lasso" title="9: 올가미 선택/이동">올가미</button>
+          <button class="canvas-palette-btn" data-tool="laser" title="0: 레이저 포인터">레이저</button>
         </div>
         ` : ''}
         <select class="draw-tool-select" title="도구">
           <option value="text">텍스트</option>
           <option value="pen">펜</option>
-          <option value="laser">레이저</option>
           <option value="highlighter">형광펜</option>
           <option value="eraser">지우개</option>
           <option value="line">직선</option>
@@ -1640,6 +2265,8 @@ function createTabContent(tabId) {
           <option value="rect">사각형</option>
           <option value="circle">원</option>
           <option value="pan">이동/줌</option>
+          <option value="lasso">올가미</option>
+          <option value="laser">레이저</option>
         </select>
         <input type="color" class="draw-color-input" value="#ffffff" title="도구 색상">
         <input type="range" class="draw-size-input" min="1" max="36" step="1" value="6" title="도구 두께">
@@ -1661,7 +2288,6 @@ function createTabContent(tabId) {
 
       <div class="canvas-tools">
         <button class="canvas-tool-btn canvas-add-image-btn" title="이미지 붙여넣기/파일 추가">이미지</button>
-        <button class="canvas-tool-btn canvas-add-video-btn" title="영상 URL 추가">영상</button>
         <button class="canvas-tool-btn canvas-add-text-btn" title="드래그 가능한 텍스트 박스 추가">텍스트박스</button>
         <button class="canvas-tool-btn canvas-clear-btn" title="캔버스 전체 지우기">전체지우기</button>
         <input type="file" class="canvas-image-input hidden-color-picker" accept="image/*">
@@ -1690,9 +2316,18 @@ function createTabContent(tabId) {
         <div class="chalkboard" contenteditable="true" data-tab-id="${tabId}"></div>
         ${isCanvas ? `<div class="canvas-object-layer" data-tab-id="${tabId}"></div>` : ''}
         <canvas class="drawing-canvas" data-tab-id="${tabId}"></canvas>
-        <canvas class="laser-canvas" data-tab-id="${tabId}"></canvas>
+        <canvas class="lasso-canvas" data-tab-id="${tabId}"></canvas>
         <div class="mask-overlay" data-tab-id="${tabId}"></div>
       </div>
+      <canvas class="laser-canvas" data-tab-id="${tabId}"></canvas>
+      ${isCanvas ? `
+      <div class="canvas-text-inline-toolbar" data-tab-id="${tabId}">
+        <button type="button" class="canvas-inline-tool-btn" data-action="bold">B</button>
+        <button type="button" class="canvas-inline-tool-btn italic" data-action="italic">I</button>
+        <button type="button" class="canvas-inline-tool-btn color-red" data-action="color" data-color="red">빨강</button>
+        <button type="button" class="canvas-inline-tool-btn color-blue" data-action="color" data-color="blue">파랑</button>
+      </div>
+      ` : ''}
     </div>
   `;
 
@@ -1726,8 +2361,12 @@ function switchToTab(tabId) {
       applyAllInteractionStates();
     }
   } else {
-    syncDrawControls();
-    applyAllInteractionStates();
+    if (appSettings.activeTool !== 'text') {
+      setActiveTool('text', { markDirty: false });
+    } else {
+      syncDrawControls();
+      applyAllInteractionStates();
+    }
   }
 
   document.querySelectorAll('.tab').forEach((tabElement) => {
@@ -1752,6 +2391,8 @@ function closeTab(tabId) {
 
   tabs.delete(tabId);
   drawingStates.delete(tabId);
+  laserStates.delete(tabId);
+  lassoStates.delete(tabId);
 
   document.querySelector(`.tab[data-tab-id="${tabId}"]`)?.remove();
   document.querySelector(`.tab-content[data-tab-id="${tabId}"]`)?.remove();
@@ -1773,6 +2414,9 @@ function closeTab(tabId) {
 
 function captureAllTabContents() {
   tabs.forEach((tabData, tabId) => {
+    if (isCanvasTab(tabId)) {
+      commitLassoSelection(tabId, { markDirty: false });
+    }
     const dom = getTabDom(tabId);
     if (dom.chalkboard) {
       tabData.content = dom.chalkboard.innerHTML;
@@ -1903,7 +2547,6 @@ function setupTabEventListeners(tabId) {
   const mathButton = toolbar.querySelector('.math-button');
   const symbolPanel = toolbar.querySelector('.math-symbol-panel');
   const canvasAddImageBtn = toolbar.querySelector('.canvas-add-image-btn');
-  const canvasAddVideoBtn = toolbar.querySelector('.canvas-add-video-btn');
   const canvasAddTextBtn = toolbar.querySelector('.canvas-add-text-btn');
   const canvasClearBtn = toolbar.querySelector('.canvas-clear-btn');
   const canvasImageInput = toolbar.querySelector('.canvas-image-input');
@@ -2081,20 +2724,6 @@ function setupTabEventListeners(tabId) {
       event.target.value = '';
     };
     reader.readAsDataURL(file);
-  });
-
-  canvasAddVideoBtn?.addEventListener('click', () => {
-    if (appSettings.editLocked) {
-      return;
-    }
-    const url = window.prompt('영상 URL을 입력하세요 (YouTube 링크 가능)');
-    if (!url) {
-      return;
-    }
-    const ok = addCanvasVideoFromUrl(tabId, url.trim());
-    if (!ok) {
-      window.alert('유효한 URL이 아닙니다.');
-    }
   });
 
   canvasAddTextBtn?.addEventListener('click', () => {
@@ -2443,7 +3072,7 @@ function updateContrastWarningForActiveTab() {
 function initializeCanvas(tabId) {
   const tabData = tabs.get(tabId);
   const dom = getTabDom(tabId);
-  if (!tabData || !dom.stage || !dom.canvas || !dom.laserCanvas) {
+  if (!tabData || !dom.stage || !dom.canvas || !dom.laserCanvas || !dom.lassoCanvas) {
     return;
   }
 
@@ -2461,40 +3090,186 @@ function initializeCanvas(tabId) {
     baseImage: null
   });
   ensureLaserState(tabId);
+  ensureLassoState(tabId);
   tabData.resizeObserver = observer;
+}
+
+function getDefaultCanvasWorldWidth(viewportWidth) {
+  return clamp(
+    Math.max(CANVAS_WORLD_MIN_WIDTH, Math.floor(viewportWidth * CANVAS_WORLD_WIDTH_MULTIPLIER)),
+    CANVAS_WORLD_MIN_WIDTH,
+    CANVAS_WORLD_MAX_WIDTH
+  );
+}
+
+function getDefaultCanvasWorldHeight(viewportHeight) {
+  return clamp(
+    Math.max(CANVAS_WORLD_MIN_HEIGHT, Math.floor(viewportHeight * CANVAS_WORLD_HEIGHT_MULTIPLIER)),
+    CANVAS_WORLD_MIN_HEIGHT,
+    CANVAS_WORLD_MAX_HEIGHT
+  );
+}
+
+function ensureCanvasWorldSize(tabData, viewportWidth, viewportHeight) {
+  const defaultWidth = getDefaultCanvasWorldWidth(viewportWidth);
+  const defaultHeight = getDefaultCanvasWorldHeight(viewportHeight);
+
+  const savedWidth = Number(tabData?.viewState?.worldWidth);
+  const savedHeight = Number(tabData?.viewState?.worldHeight);
+  const worldWidth = clamp(
+    Number.isFinite(savedWidth) && savedWidth > 0 ? Math.round(savedWidth) : defaultWidth,
+    CANVAS_WORLD_MIN_WIDTH,
+    CANVAS_WORLD_MAX_WIDTH
+  );
+  const worldHeight = clamp(
+    Number.isFinite(savedHeight) && savedHeight > 0 ? Math.round(savedHeight) : defaultHeight,
+    CANVAS_WORLD_MIN_HEIGHT,
+    CANVAS_WORLD_MAX_HEIGHT
+  );
+
+  if (tabData?.viewState) {
+    tabData.viewState.worldWidth = worldWidth;
+    tabData.viewState.worldHeight = worldHeight;
+  }
+
+  return { worldWidth, worldHeight };
+}
+
+function clampCanvasPanToBounds(tabId, viewportWidth = null, viewportHeight = null) {
+  const tabData = tabs.get(tabId);
+  const dom = getTabDom(tabId);
+  if (!tabData || !dom.stage || !isCanvasTab(tabId)) {
+    return;
+  }
+
+  const resolvedViewportWidth = viewportWidth ?? Math.max(1, Math.floor(dom.stage.clientWidth));
+  const resolvedViewportHeight = viewportHeight ?? Math.max(1, Math.floor(dom.stage.clientHeight));
+  if (resolvedViewportWidth <= 1 || resolvedViewportHeight <= 1) {
+    return;
+  }
+
+  const { worldWidth, worldHeight } = ensureCanvasWorldSize(tabData, resolvedViewportWidth, resolvedViewportHeight);
+  const scale = clamp(Number(tabData.viewState?.scale) || 1, 0.5, 3.2);
+  tabData.viewState.scale = scale;
+
+  const minPanX = Math.min(0, resolvedViewportWidth - (worldWidth * scale));
+  const minPanY = Math.min(0, resolvedViewportHeight - (worldHeight * scale));
+  tabData.viewState.panX = clamp(Number(tabData.viewState.panX) || 0, minPanX, 0);
+  tabData.viewState.panY = clamp(Number(tabData.viewState.panY) || 0, minPanY, 0);
+}
+
+function maybeAutoExpandCanvasWorld(tabId) {
+  const tabData = tabs.get(tabId);
+  const dom = getTabDom(tabId);
+  if (!tabData || !dom.stage || !isCanvasTab(tabId)) {
+    return false;
+  }
+
+  const viewportWidth = Math.max(1, Math.floor(dom.stage.clientWidth));
+  const viewportHeight = Math.max(1, Math.floor(dom.stage.clientHeight));
+  if (viewportWidth <= 1 || viewportHeight <= 1) {
+    return false;
+  }
+
+  const { worldWidth, worldHeight } = ensureCanvasWorldSize(tabData, viewportWidth, viewportHeight);
+  const scale = clamp(Number(tabData.viewState?.scale) || 1, 0.5, 3.2);
+  const panX = Number(tabData.viewState.panX) || 0;
+  const panY = Number(tabData.viewState.panY) || 0;
+
+  const visibleRight = (-panX + viewportWidth) / scale;
+  const visibleBottom = (-panY + viewportHeight) / scale;
+
+  let expanded = false;
+  let nextWorldWidth = worldWidth;
+  let nextWorldHeight = worldHeight;
+
+  if (visibleRight >= (worldWidth - CANVAS_WORLD_AUTO_EXPAND_THRESHOLD) && worldWidth < CANVAS_WORLD_MAX_WIDTH) {
+    nextWorldWidth = Math.min(CANVAS_WORLD_MAX_WIDTH, worldWidth + CANVAS_WORLD_EXPAND_STEP);
+    expanded = nextWorldWidth !== worldWidth;
+  }
+
+  if (visibleBottom >= (worldHeight - CANVAS_WORLD_AUTO_EXPAND_THRESHOLD) && worldHeight < CANVAS_WORLD_MAX_HEIGHT) {
+    nextWorldHeight = Math.min(CANVAS_WORLD_MAX_HEIGHT, worldHeight + CANVAS_WORLD_EXPAND_STEP);
+    expanded = expanded || nextWorldHeight !== worldHeight;
+  }
+
+  if (!expanded) {
+    return false;
+  }
+
+  tabData.viewState.worldWidth = nextWorldWidth;
+  tabData.viewState.worldHeight = nextWorldHeight;
+  resizeCanvas(tabId);
+  return true;
 }
 
 function resizeCanvas(tabId) {
   const dom = getTabDom(tabId);
   const tabData = tabs.get(tabId);
-  if (!dom.canvas || !dom.laserCanvas || !dom.stage || !tabData) {
+  if (!dom.canvas || !dom.laserCanvas || !dom.lassoCanvas || !dom.stage || !tabData) {
     return;
   }
 
-  const width = Math.max(1, Math.floor(dom.stage.clientWidth));
-  const height = Math.max(1, Math.floor(dom.stage.clientHeight));
-  if (width === 1 || height === 1) {
+  const viewportWidth = Math.max(1, Math.floor(dom.stage.clientWidth));
+  const viewportHeight = Math.max(1, Math.floor(dom.stage.clientHeight));
+  if (viewportWidth === 1 || viewportHeight === 1) {
     return;
   }
 
-  const devicePixelRatio = window.devicePixelRatio || 1;
+  const isCanvas = tabData.kind === 'canvas';
+  const worldSize = isCanvas
+    ? ensureCanvasWorldSize(tabData, viewportWidth, viewportHeight)
+    : { worldWidth: viewportWidth, worldHeight: viewportHeight };
+  const width = worldSize.worldWidth;
+  const height = worldSize.worldHeight;
+
+  const devicePixelRatio = isCanvas ? 1 : (window.devicePixelRatio || 1);
+  const laserPixelRatio = 1;
   const targetWidth = Math.floor(width * devicePixelRatio);
   const targetHeight = Math.floor(height * devicePixelRatio);
+  const laserTargetWidth = Math.floor(viewportWidth * laserPixelRatio);
+  const laserTargetHeight = Math.floor(viewportHeight * laserPixelRatio);
+  const sizeUnchanged = (
+    dom.canvas.width === targetWidth &&
+    dom.canvas.height === targetHeight &&
+    dom.laserCanvas.width === laserTargetWidth &&
+    dom.laserCanvas.height === laserTargetHeight &&
+    dom.lassoCanvas.width === targetWidth &&
+    dom.lassoCanvas.height === targetHeight
+  );
 
-  if (dom.canvas.width === targetWidth && dom.canvas.height === targetHeight) {
-    if (dom.laserCanvas.width === targetWidth && dom.laserCanvas.height === targetHeight) {
-      return;
-    }
+  if (!sizeUnchanged) {
+    dom.canvas.width = targetWidth;
+    dom.canvas.height = targetHeight;
+    dom.laserCanvas.width = laserTargetWidth;
+    dom.laserCanvas.height = laserTargetHeight;
+    dom.lassoCanvas.width = targetWidth;
+    dom.lassoCanvas.height = targetHeight;
   }
 
-  dom.canvas.width = targetWidth;
-  dom.canvas.height = targetHeight;
   dom.canvas.style.width = `${width}px`;
   dom.canvas.style.height = `${height}px`;
-  dom.laserCanvas.width = targetWidth;
-  dom.laserCanvas.height = targetHeight;
-  dom.laserCanvas.style.width = `${width}px`;
-  dom.laserCanvas.style.height = `${height}px`;
+  dom.laserCanvas.style.width = `${viewportWidth}px`;
+  dom.laserCanvas.style.height = `${viewportHeight}px`;
+  dom.lassoCanvas.style.width = `${width}px`;
+  dom.lassoCanvas.style.height = `${height}px`;
+  if (dom.transform) {
+    dom.transform.style.width = `${width}px`;
+    dom.transform.style.height = `${height}px`;
+  }
+  if (dom.objectLayer) {
+    dom.objectLayer.style.width = `${width}px`;
+    dom.objectLayer.style.height = `${height}px`;
+  }
+
+  if (isCanvas) {
+    clampCanvasPanToBounds(tabId, viewportWidth, viewportHeight);
+  }
+
+  if (sizeUnchanged) {
+    applyViewTransform(tabId);
+    return;
+  }
 
   const ctx = dom.canvas.getContext('2d');
   ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -2504,7 +3279,9 @@ function resizeCanvas(tabId) {
   ctx.lineJoin = 'round';
 
   renderDrawingData(tabId);
+  renderLassoOverlay(tabId);
   renderLaserTrail(tabId);
+  applyViewTransform(tabId);
 }
 
 function renderDrawingData(tabId) {
@@ -2523,7 +3300,7 @@ function renderDrawingData(tabId) {
   ctx.clearRect(0, 0, dom.canvas.width, dom.canvas.height);
 
   if (!tabData.drawingData) {
-    const dpr = window.devicePixelRatio || 1;
+    const dpr = getCanvasPixelRatio(tabId);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     return;
   }
@@ -2533,7 +3310,7 @@ function renderDrawingData(tabId) {
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, dom.canvas.width, dom.canvas.height);
     ctx.drawImage(image, 0, 0, dom.canvas.width, dom.canvas.height);
-    const dpr = window.devicePixelRatio || 1;
+    const dpr = getCanvasPixelRatio(tabId);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   };
   image.src = tabData.drawingData;
@@ -2546,12 +3323,47 @@ function getPointerPointInCanvas(tabId, event) {
     return { x: 0, y: 0 };
   }
 
+  if (dom.canvas) {
+    const canvasRect = dom.canvas.getBoundingClientRect();
+    if (canvasRect.width > 0 && canvasRect.height > 0) {
+      const cssWidth = parseFloat(dom.canvas.style.width) || canvasRect.width;
+      const cssHeight = parseFloat(dom.canvas.style.height) || canvasRect.height;
+      const rawX = (event.clientX - canvasRect.left) * (cssWidth / canvasRect.width);
+      const rawY = (event.clientY - canvasRect.top) * (cssHeight / canvasRect.height);
+
+      if (isCanvasTab(tabId)) {
+        const worldWidth = Number(tabData.viewState?.worldWidth) || cssWidth;
+        const worldHeight = Number(tabData.viewState?.worldHeight) || cssHeight;
+        return {
+          x: clamp(rawX, 0, worldWidth),
+          y: clamp(rawY, 0, worldHeight)
+        };
+      }
+
+      return { x: rawX, y: rawY };
+    }
+  }
+
   const rect = dom.stage.getBoundingClientRect();
   const localX = event.clientX - rect.left;
   const localY = event.clientY - rect.top;
   return {
     x: (localX - tabData.viewState.panX) / tabData.viewState.scale,
     y: (localY - tabData.viewState.panY) / tabData.viewState.scale
+  };
+}
+
+function getPointerPointInStage(tabId, event) {
+  const dom = getTabDom(tabId);
+  if (!dom.stage) {
+    return { x: 0, y: 0 };
+  }
+  const rect = dom.stage.getBoundingClientRect();
+  const x = event.clientX - rect.left;
+  const y = event.clientY - rect.top;
+  return {
+    x: clamp(x, 0, rect.width),
+    y: clamp(y, 0, rect.height)
   };
 }
 
@@ -2575,28 +3387,43 @@ function configureDrawingContext(ctx, tool) {
 }
 
 function drawArrow(ctx, fromX, fromY, toX, toY) {
-  const headLength = Math.max(12, appSettings.drawSize * 2);
-  const angle = Math.atan2(toY - fromY, toX - fromX);
+  const dx = toX - fromX;
+  const dy = toY - fromY;
+  const distance = Math.hypot(dx, dy);
+  if (distance < 1) {
+    return;
+  }
+
+  const ux = dx / distance;
+  const uy = dy / distance;
+  const px = -uy;
+  const py = ux;
+
+  const headLength = Math.max(16, appSettings.drawSize * 3);
+  const headWidth = Math.max(10, appSettings.drawSize * 2.4);
+  const shaftEndX = toX - (ux * headLength);
+  const shaftEndY = toY - (uy * headLength);
+
+  const leftX = shaftEndX + (px * headWidth * 0.5);
+  const leftY = shaftEndY + (py * headWidth * 0.5);
+  const rightX = shaftEndX - (px * headWidth * 0.5);
+  const rightY = shaftEndY - (py * headWidth * 0.5);
 
   ctx.beginPath();
   ctx.moveTo(fromX, fromY);
-  ctx.lineTo(toX, toY);
+  ctx.lineTo(shaftEndX, shaftEndY);
   ctx.stroke();
 
+  ctx.save();
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = appSettings.drawColor;
   ctx.beginPath();
   ctx.moveTo(toX, toY);
-  ctx.lineTo(
-    toX - headLength * Math.cos(angle - Math.PI / 6),
-    toY - headLength * Math.sin(angle - Math.PI / 6)
-  );
-  ctx.lineTo(
-    toX - headLength * Math.cos(angle + Math.PI / 6),
-    toY - headLength * Math.sin(angle + Math.PI / 6)
-  );
+  ctx.lineTo(leftX, leftY);
+  ctx.lineTo(rightX, rightY);
   ctx.closePath();
-  ctx.fillStyle = appSettings.drawColor;
-  ctx.globalAlpha = 1;
   ctx.fill();
+  ctx.restore();
 }
 
 function drawShape(ctx, tool, startX, startY, endX, endY) {
@@ -2634,14 +3461,65 @@ function drawShape(ctx, tool, startX, startY, endX, endY) {
 function ensureLaserState(tabId) {
   if (!laserStates.has(tabId)) {
     laserStates.set(tabId, {
-      segments: [],
       isDrawing: false,
       pointerId: null,
       lastPoint: null,
-      rafId: null
+      rafId: null,
+      lastFrameAt: 0,
+      trailUntil: 0
     });
   }
   return laserStates.get(tabId);
+}
+
+function drawLaserSegment(tabId, from, to, color, size) {
+  const dom = getTabDom(tabId);
+  if (!dom.laserCanvas || !from || !to) {
+    return;
+  }
+
+  const ctx = dom.laserCanvas.getContext('2d');
+  if (!ctx) {
+    return;
+  }
+
+  const cssWidth = parseFloat(dom.laserCanvas.style.width) || dom.laserCanvas.clientWidth || 1;
+  const dpr = dom.laserCanvas.width / Math.max(1, cssWidth);
+  const strokeColor = color || '#ffffff';
+
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.globalCompositeOperation = 'source-over';
+
+  ctx.shadowBlur = 10;
+  ctx.shadowColor = colorToRgba(strokeColor, 0.42);
+  ctx.strokeStyle = colorToRgba(strokeColor, 0.28);
+  ctx.lineWidth = size * 1.65;
+  ctx.beginPath();
+  ctx.moveTo(from.x, from.y);
+  ctx.lineTo(to.x, to.y);
+  ctx.stroke();
+
+  ctx.shadowBlur = 0;
+  ctx.strokeStyle = colorToRgba(strokeColor, 0.94);
+  ctx.lineWidth = Math.max(1.4, size * 0.66);
+  ctx.beginPath();
+  ctx.moveTo(from.x, from.y);
+  ctx.lineTo(to.x, to.y);
+  ctx.stroke();
+}
+
+function getLaserPointerPoints(tabId, event) {
+  const coalesced = typeof event.getCoalescedEvents === 'function'
+    ? event.getCoalescedEvents()
+    : null;
+
+  if (!coalesced || coalesced.length === 0) {
+    return [getPointerPointInStage(tabId, event)];
+  }
+
+  return coalesced.map((entry) => getPointerPointInStage(tabId, entry));
 }
 
 function scheduleLaserRender(tabId) {
@@ -2666,32 +3544,24 @@ function renderLaserTrail(tabId) {
   }
 
   const now = performance.now();
-  state.segments = state.segments.filter((segment) => (now - segment.createdAt) < LASER_FADE_MS);
+  const lastFrameAt = state.lastFrameAt || now;
+  state.lastFrameAt = now;
+  const delta = clamp(now - lastFrameAt, 8, 48);
+  const fadeStrength = clamp((delta / LASER_FADE_MS) * 3.2, 0.05, 0.28);
 
   ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.clearRect(0, 0, dom.laserCanvas.width, dom.laserCanvas.height);
+  ctx.globalCompositeOperation = 'destination-out';
+  ctx.fillStyle = `rgba(0, 0, 0, ${fadeStrength})`;
+  ctx.fillRect(0, 0, dom.laserCanvas.width, dom.laserCanvas.height);
+  ctx.globalCompositeOperation = 'source-over';
 
-  if (state.segments.length > 0) {
-    const dpr = window.devicePixelRatio || 1;
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-
-    state.segments.forEach((segment) => {
-      const age = now - segment.createdAt;
-      const alpha = clamp(1 - (age / LASER_FADE_MS), 0, 1);
-      ctx.strokeStyle = `rgba(255, 59, 48, ${alpha})`;
-      ctx.lineWidth = segment.size;
-      ctx.beginPath();
-      ctx.moveTo(segment.x1, segment.y1);
-      ctx.lineTo(segment.x2, segment.y2);
-      ctx.stroke();
-    });
+  if (!state.isDrawing && now >= state.trailUntil) {
+    ctx.clearRect(0, 0, dom.laserCanvas.width, dom.laserCanvas.height);
+    state.lastFrameAt = 0;
+    return;
   }
 
-  if (state.isDrawing || state.segments.length > 0) {
-    scheduleLaserRender(tabId);
-  }
+  scheduleLaserRender(tabId);
 }
 
 function beginLaserTrail(tabId, pointerId, point) {
@@ -2699,24 +3569,46 @@ function beginLaserTrail(tabId, pointerId, point) {
   state.isDrawing = true;
   state.pointerId = pointerId;
   state.lastPoint = point;
+  state.lastFrameAt = 0;
+  state.trailUntil = performance.now() + LASER_TRAIL_GRACE_MS;
   scheduleLaserRender(tabId);
 }
 
-function appendLaserTrail(tabId, pointerId, point) {
+function appendLaserTrail(tabId, pointerId, points) {
   const state = ensureLaserState(tabId);
-  if (!state.isDrawing || state.pointerId !== pointerId || !state.lastPoint) {
+  if (!state.isDrawing || state.pointerId !== pointerId || !state.lastPoint || !Array.isArray(points) || points.length === 0) {
     return;
   }
 
-  state.segments.push({
-    x1: state.lastPoint.x,
-    y1: state.lastPoint.y,
-    x2: point.x,
-    y2: point.y,
-    createdAt: performance.now(),
-    size: Math.max(2, appSettings.drawSize + 2)
+  const strokeSize = Math.max(2, appSettings.drawSize + 2);
+  const strokeColor = appSettings.drawColor;
+  let anchor = state.lastPoint;
+
+  points.forEach((targetPoint) => {
+    const dx = targetPoint.x - anchor.x;
+    const dy = targetPoint.y - anchor.y;
+    const distance = Math.hypot(dx, dy);
+    if (distance < 0.45) {
+      return;
+    }
+
+    const start = { x: anchor.x, y: anchor.y };
+    const steps = Math.min(12, Math.max(1, Math.ceil(distance / 10)));
+    let prev = start;
+    for (let i = 1; i <= steps; i += 1) {
+      const t = i / steps;
+      const next = {
+        x: start.x + (dx * t),
+        y: start.y + (dy * t)
+      };
+      drawLaserSegment(tabId, prev, next, strokeColor, strokeSize);
+      prev = next;
+    }
+    anchor = targetPoint;
   });
-  state.lastPoint = point;
+
+  state.lastPoint = anchor;
+  state.trailUntil = performance.now() + LASER_TRAIL_GRACE_MS;
   scheduleLaserRender(tabId);
 }
 
@@ -2728,7 +3620,228 @@ function endLaserTrail(tabId, pointerId) {
   state.isDrawing = false;
   state.pointerId = null;
   state.lastPoint = null;
+  state.trailUntil = performance.now() + LASER_TRAIL_GRACE_MS;
   scheduleLaserRender(tabId);
+}
+
+function ensureLassoState(tabId) {
+  if (!lassoStates.has(tabId)) {
+    lassoStates.set(tabId, {
+      mode: 'idle',
+      points: [],
+      selectionCanvas: null,
+      selectionX: 0,
+      selectionY: 0,
+      selectionWidth: 0,
+      selectionHeight: 0,
+      dragOffsetX: 0,
+      dragOffsetY: 0
+    });
+  }
+  return lassoStates.get(tabId);
+}
+
+function getCanvasPixelRatio(tabId) {
+  const dom = getTabDom(tabId);
+  if (!dom.canvas) {
+    return window.devicePixelRatio || 1;
+  }
+  const cssWidth = parseFloat(dom.canvas.style.width) || dom.canvas.clientWidth || 1;
+  return dom.canvas.width / Math.max(1, cssWidth);
+}
+
+function renderLassoOverlay(tabId) {
+  const dom = getTabDom(tabId);
+  const state = ensureLassoState(tabId);
+  if (!dom.lassoCanvas) {
+    return;
+  }
+
+  const ctx = dom.lassoCanvas.getContext('2d');
+  if (!ctx) {
+    return;
+  }
+
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, dom.lassoCanvas.width, dom.lassoCanvas.height);
+
+  const dpr = getCanvasPixelRatio(tabId);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+
+  if (state.selectionCanvas) {
+    ctx.drawImage(
+      state.selectionCanvas,
+      0,
+      0,
+      state.selectionCanvas.width,
+      state.selectionCanvas.height,
+      state.selectionX,
+      state.selectionY,
+      state.selectionWidth,
+      state.selectionHeight
+    );
+
+    ctx.strokeStyle = 'rgba(59, 130, 246, 0.96)';
+    ctx.lineWidth = 1.6;
+    ctx.shadowBlur = 8;
+    ctx.shadowColor = 'rgba(59, 130, 246, 0.45)';
+    ctx.setLineDash([7, 4]);
+    ctx.strokeRect(state.selectionX, state.selectionY, state.selectionWidth, state.selectionHeight);
+    ctx.setLineDash([]);
+    ctx.shadowBlur = 0;
+    ctx.shadowColor = 'transparent';
+  }
+
+  if (state.mode === 'selecting' && state.points.length > 1) {
+    ctx.strokeStyle = 'rgba(59, 130, 246, 0.95)';
+    ctx.fillStyle = 'rgba(59, 130, 246, 0.14)';
+    ctx.lineWidth = 1.4;
+    ctx.setLineDash([8, 5]);
+    ctx.beginPath();
+    state.points.forEach((point, index) => {
+      if (index === 0) {
+        ctx.moveTo(point.x, point.y);
+      } else {
+        ctx.lineTo(point.x, point.y);
+      }
+    });
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+}
+
+function commitLassoSelection(tabId, options = {}) {
+  const dom = getTabDom(tabId);
+  const state = ensureLassoState(tabId);
+  if (!dom.canvas || !state.selectionCanvas) {
+    state.mode = 'idle';
+    state.points = [];
+    renderLassoOverlay(tabId);
+    return false;
+  }
+
+  const dpr = getCanvasPixelRatio(tabId);
+  const ctx = dom.canvas.getContext('2d');
+  if (!ctx) {
+    return false;
+  }
+
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.drawImage(
+    state.selectionCanvas,
+    0,
+    0,
+    state.selectionCanvas.width,
+    state.selectionCanvas.height,
+    Math.round(state.selectionX * dpr),
+    Math.round(state.selectionY * dpr),
+    state.selectionCanvas.width,
+    state.selectionCanvas.height
+  );
+  ctx.restore();
+
+  state.mode = 'idle';
+  state.points = [];
+  state.selectionCanvas = null;
+  state.selectionWidth = 0;
+  state.selectionHeight = 0;
+  renderLassoOverlay(tabId);
+
+  persistDrawingForTab(tabId);
+  if (options.markDirty !== false) {
+    markDirty();
+  }
+  return true;
+}
+
+function finalizeLassoSelection(tabId, pointerPoint) {
+  const dom = getTabDom(tabId);
+  const state = ensureLassoState(tabId);
+  if (!dom.canvas || state.points.length < 3) {
+    state.mode = 'idle';
+    state.points = [];
+    renderLassoOverlay(tabId);
+    return false;
+  }
+
+  const dpr = getCanvasPixelRatio(tabId);
+  const minX = Math.max(0, Math.min(...state.points.map((p) => p.x)));
+  const minY = Math.max(0, Math.min(...state.points.map((p) => p.y)));
+  const maxX = Math.max(...state.points.map((p) => p.x));
+  const maxY = Math.max(...state.points.map((p) => p.y));
+
+  const pxX = Math.max(0, Math.floor(minX * dpr));
+  const pxY = Math.max(0, Math.floor(minY * dpr));
+  const pxW = Math.min(dom.canvas.width - pxX, Math.ceil((maxX - minX) * dpr));
+  const pxH = Math.min(dom.canvas.height - pxY, Math.ceil((maxY - minY) * dpr));
+  if (pxW < 2 || pxH < 2) {
+    state.mode = 'idle';
+    state.points = [];
+    renderLassoOverlay(tabId);
+    return false;
+  }
+
+  const sourceCtx = dom.canvas.getContext('2d');
+  if (!sourceCtx) {
+    return false;
+  }
+
+  const fragment = sourceCtx.getImageData(pxX, pxY, pxW, pxH);
+  const selectionCanvas = document.createElement('canvas');
+  selectionCanvas.width = pxW;
+  selectionCanvas.height = pxH;
+  const selectionCtx = selectionCanvas.getContext('2d');
+  if (!selectionCtx) {
+    return false;
+  }
+
+  selectionCtx.putImageData(fragment, 0, 0);
+  selectionCtx.globalCompositeOperation = 'destination-in';
+  selectionCtx.beginPath();
+  state.points.forEach((point, index) => {
+    const x = (point.x * dpr) - pxX;
+    const y = (point.y * dpr) - pxY;
+    if (index === 0) {
+      selectionCtx.moveTo(x, y);
+    } else {
+      selectionCtx.lineTo(x, y);
+    }
+  });
+  selectionCtx.closePath();
+  selectionCtx.fill();
+
+  sourceCtx.save();
+  sourceCtx.setTransform(1, 0, 0, 1, 0, 0);
+  sourceCtx.beginPath();
+  state.points.forEach((point, index) => {
+    const x = point.x * dpr;
+    const y = point.y * dpr;
+    if (index === 0) {
+      sourceCtx.moveTo(x, y);
+    } else {
+      sourceCtx.lineTo(x, y);
+    }
+  });
+  sourceCtx.closePath();
+  sourceCtx.clip();
+  sourceCtx.clearRect(pxX - 1, pxY - 1, pxW + 2, pxH + 2);
+  sourceCtx.restore();
+
+  state.mode = 'selected';
+  state.selectionCanvas = selectionCanvas;
+  state.selectionX = pxX / dpr;
+  state.selectionY = pxY / dpr;
+  state.selectionWidth = pxW / dpr;
+  state.selectionHeight = pxH / dpr;
+  state.dragOffsetX = 0;
+  state.dragOffsetY = 0;
+  state.points = [];
+  renderLassoOverlay(tabId);
+  markDirty(false);
+  return true;
 }
 
 function persistDrawingForTab(tabId) {
@@ -2741,6 +3854,10 @@ function persistDrawingForTab(tabId) {
 }
 
 function canDrawOnTab(tabId) {
+  if (!isCanvasTab(tabId)) {
+    return false;
+  }
+
   const isSecondarySplit = appSettings.splitMode && appSettings.splitTabId === tabId && activeTabId !== tabId;
   if (isSecondarySplit) {
     return false;
@@ -2770,6 +3887,7 @@ function setupDrawingHandlers(tabId) {
   if (!dom.canvas || !dom.stage || !drawingState) {
     return;
   }
+  const lassoState = ensureLassoState(tabId);
 
   const isObjectControlTarget = (event) => {
     if (!(event.target instanceof Element)) {
@@ -2796,6 +3914,23 @@ function setupDrawingHandlers(tabId) {
       return true;
     }
 
+    if (appSettings.activeTool === 'lasso') {
+      const point = getPointerPointInCanvas(tabId, event);
+      if (lassoState.mode === 'selecting') {
+        finalizeLassoSelection(tabId, point);
+      } else if (lassoState.mode === 'moving') {
+        lassoState.mode = 'selected';
+        renderLassoOverlay(tabId);
+        markDirty(false);
+      } else {
+        renderLassoOverlay(tabId);
+      }
+      drawingState.isDrawing = false;
+      drawingState.pointerId = null;
+      drawingState.baseImage = null;
+      return true;
+    }
+
     if (drawingState.baseImage) {
       const point = getPointerPointInCanvas(tabId, event);
       const ctx = dom.canvas.getContext('2d');
@@ -2813,6 +3948,16 @@ function setupDrawingHandlers(tabId) {
   };
 
   dom.stage.addEventListener('wheel', (event) => {
+    const thicknessWheelTools = new Set(['pen', 'highlighter', 'eraser', 'line', 'arrow', 'rect', 'circle', 'laser']);
+    if (isCanvasTab(tabId) && !event.ctrlKey && appSettings.activeTool !== 'pan' && thicknessWheelTools.has(appSettings.activeTool)) {
+      event.preventDefault();
+      const direction = event.deltaY < 0 ? 1 : -1;
+      appSettings.drawSize = clamp((Number(appSettings.drawSize) || 6) + direction, 1, 36);
+      syncDrawControls();
+      markDirty(false);
+      return;
+    }
+
     if (!(event.ctrlKey || appSettings.activeTool === 'pan')) {
       return;
     }
@@ -2834,6 +3979,8 @@ function setupDrawingHandlers(tabId) {
     tabData.viewState.panY = localY - ((localY - tabData.viewState.panY) / oldScale) * newScale;
     tabData.viewState.scale = newScale;
 
+    maybeAutoExpandCanvasWorld(tabId);
+    clampCanvasPanToBounds(tabId);
     applyViewTransform(tabId);
     markDirty(false);
   }, { passive: false });
@@ -2848,7 +3995,9 @@ function setupDrawingHandlers(tabId) {
     }
 
     if (canDrawOnTab(tabId) && !shouldStartPan(event) && !isObjectControlTarget(event)) {
-      const point = getPointerPointInCanvas(tabId, event);
+      const point = appSettings.activeTool === 'laser'
+        ? getPointerPointInStage(tabId, event)
+        : getPointerPointInCanvas(tabId, event);
       const ctx = dom.canvas.getContext('2d');
       configureDrawingContext(ctx, appSettings.activeTool);
 
@@ -2860,6 +4009,27 @@ function setupDrawingHandlers(tabId) {
 
       if (appSettings.activeTool === 'laser') {
         beginLaserTrail(tabId, event.pointerId, point);
+      } else if (appSettings.activeTool === 'lasso') {
+        const inSelection = Boolean(
+          lassoState.selectionCanvas &&
+          point.x >= lassoState.selectionX &&
+          point.x <= (lassoState.selectionX + lassoState.selectionWidth) &&
+          point.y >= lassoState.selectionY &&
+          point.y <= (lassoState.selectionY + lassoState.selectionHeight)
+        );
+
+        if (inSelection) {
+          lassoState.mode = 'moving';
+          lassoState.dragOffsetX = point.x - lassoState.selectionX;
+          lassoState.dragOffsetY = point.y - lassoState.selectionY;
+        } else {
+          if (lassoState.selectionCanvas) {
+            commitLassoSelection(tabId, { markDirty: true });
+          }
+          lassoState.mode = 'selecting';
+          lassoState.points = [point];
+        }
+        renderLassoOverlay(tabId);
       } else if (appSettings.activeTool === 'pen' || appSettings.activeTool === 'highlighter' || appSettings.activeTool === 'eraser') {
         ctx.beginPath();
         ctx.moveTo(point.x, point.y);
@@ -2908,12 +4078,27 @@ function setupDrawingHandlers(tabId) {
 
   dom.stage.addEventListener('pointermove', (event) => {
     if (drawingState.isDrawing && drawingState.pointerId === event.pointerId) {
-      const point = getPointerPointInCanvas(tabId, event);
+      const point = appSettings.activeTool === 'laser'
+        ? getPointerPointInStage(tabId, event)
+        : getPointerPointInCanvas(tabId, event);
       const ctx = dom.canvas.getContext('2d');
       configureDrawingContext(ctx, appSettings.activeTool);
 
       if (appSettings.activeTool === 'laser') {
-        appendLaserTrail(tabId, event.pointerId, point);
+        const laserPoints = getLaserPointerPoints(tabId, event);
+        appendLaserTrail(tabId, event.pointerId, laserPoints);
+      } else if (appSettings.activeTool === 'lasso') {
+        if (lassoState.mode === 'selecting') {
+          const lastPoint = lassoState.points[lassoState.points.length - 1];
+          if (!lastPoint || Math.hypot(point.x - lastPoint.x, point.y - lastPoint.y) >= LASSO_POINT_MIN_DISTANCE) {
+            lassoState.points.push(point);
+            renderLassoOverlay(tabId);
+          }
+        } else if (lassoState.mode === 'moving' && lassoState.selectionCanvas) {
+          lassoState.selectionX = point.x - lassoState.dragOffsetX;
+          lassoState.selectionY = point.y - lassoState.dragOffsetY;
+          renderLassoOverlay(tabId);
+        }
       } else if (appSettings.activeTool === 'pen' || appSettings.activeTool === 'highlighter' || appSettings.activeTool === 'eraser') {
         ctx.lineTo(point.x, point.y);
         ctx.stroke();
@@ -2952,6 +4137,8 @@ function setupDrawingHandlers(tabId) {
       tabData.viewState.panY += avgY - activePanState.lastY;
       activePanState.lastX = avgX;
       activePanState.lastY = avgY;
+      maybeAutoExpandCanvasWorld(tabId);
+      clampCanvasPanToBounds(tabId);
       applyViewTransform(tabId);
       markDirty(false);
       return;
@@ -2967,6 +4154,8 @@ function setupDrawingHandlers(tabId) {
     activePanState.lastY = event.clientY;
     tabData.viewState.panX += deltaX;
     tabData.viewState.panY += deltaY;
+    maybeAutoExpandCanvasWorld(tabId);
+    clampCanvasPanToBounds(tabId);
     applyViewTransform(tabId);
     markDirty(false);
   });
@@ -3025,6 +4214,9 @@ function applyViewTransform(tabId) {
   const dom = getTabDom(tabId);
   if (!tabData || !dom.transform) {
     return;
+  }
+  if (isCanvasTab(tabId)) {
+    clampCanvasPanToBounds(tabId);
   }
   dom.transform.style.transform = `translate(${tabData.viewState.panX}px, ${tabData.viewState.panY}px) scale(${tabData.viewState.scale})`;
 }
@@ -3151,21 +4343,38 @@ function setupGlobalDocumentHandlers() {
     const isTypingField = activeElement && (
       activeElement.tagName === 'INPUT' ||
       activeElement.tagName === 'SELECT' ||
+      activeElement.tagName === 'TEXTAREA' ||
+      activeElement.isContentEditable
+    );
+    const isInputControl = activeElement && (
+      activeElement.tagName === 'INPUT' ||
+      activeElement.tagName === 'SELECT' ||
       activeElement.tagName === 'TEXTAREA'
     );
+    const primaryModifier = event.ctrlKey || event.metaKey;
 
     if (event.key === ' ' && !isTypingField) {
       isSpacePressed = true;
     }
 
-    if (event.ctrlKey && event.key === 's') {
+    if (primaryModifier && event.key.toLowerCase() === 'z' && !isInputControl) {
+      event.preventDefault();
+      if (event.shiftKey) {
+        redoLastUndo();
+      } else {
+        undoLastChange();
+      }
+      return;
+    }
+
+    if (primaryModifier && event.key === 's') {
       event.preventDefault();
       const saveButton = document.getElementById('saveButton');
       handleManualSaveClick(saveButton);
       return;
     }
 
-    if (event.ctrlKey && event.key === 'Tab') {
+    if (primaryModifier && event.key === 'Tab') {
       event.preventDefault();
       const tabIds = [...tabs.keys()];
       if (tabIds.length <= 1) {
@@ -3179,43 +4388,53 @@ function setupGlobalDocumentHandlers() {
       return;
     }
 
-    if (event.ctrlKey && (event.key === '=' || event.key === '+')) {
+    if (primaryModifier && (event.key === '=' || event.key === '+')) {
       event.preventDefault();
       adjustActiveFontSize(1);
       return;
     }
 
-    if (event.ctrlKey && event.key === '-') {
+    if (primaryModifier && event.key === '-') {
       event.preventDefault();
       adjustActiveFontSize(-1);
       return;
     }
 
-    if (event.ctrlKey && event.shiftKey && (event.key === '>' || event.key === '.')) {
+    if (primaryModifier && event.shiftKey && (event.key === '>' || event.key === '.')) {
       event.preventDefault();
       adjustActiveFontSize(1);
       return;
     }
 
-    if (event.ctrlKey && event.shiftKey && (event.key === '<' || event.key === ',')) {
+    if (primaryModifier && event.shiftKey && (event.key === '<' || event.key === ',')) {
       event.preventDefault();
       adjustActiveFontSize(-1);
       return;
     }
 
-    if (event.ctrlKey && !event.shiftKey && event.key.toLowerCase() === 'l') {
+    if (!isTypingField && TOOL_KEYPAD_SHORTCUTS[event.code]) {
+      if (!activeTabId || !isCanvasTab(activeTabId)) {
+        return;
+      }
+      const tool = TOOL_KEYPAD_SHORTCUTS[event.code];
+      setActiveTool(tool, { markDirty: false });
+      event.preventDefault();
+      return;
+    }
+
+    if (primaryModifier && !event.shiftKey && event.key.toLowerCase() === 'l') {
       event.preventDefault();
       toggleSetting('editLocked');
       return;
     }
 
-    if (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === 'm') {
+    if (primaryModifier && event.shiftKey && event.key.toLowerCase() === 'm') {
       event.preventDefault();
       toggleSetting('maskEnabled');
       return;
     }
 
-    if (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === 'v') {
+    if (primaryModifier && event.shiftKey && event.key.toLowerCase() === 'v') {
       event.preventDefault();
       toggleSetting('splitMode');
       updateSplitModeView();
@@ -3287,6 +4506,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   await loadTimetable();
   startAutoPersistenceLoops();
   await runStartupRecoveryIfNeeded();
+  resetUndoHistory();
+  pushUndoCheckpoint();
 
   if (window.electronAPI?.onSaveBeforeQuit) {
     window.electronAPI.onSaveBeforeQuit(async () => {
