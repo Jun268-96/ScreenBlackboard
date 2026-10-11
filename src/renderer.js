@@ -54,8 +54,10 @@ const CANVAS_WORLD_MAX_WIDTH = 5200;
 const CANVAS_WORLD_MAX_HEIGHT = 3200;
 const CANVAS_WORLD_EXPAND_STEP = 480;
 const CANVAS_WORLD_AUTO_EXPAND_THRESHOLD = 240;
-const UNDO_HISTORY_LIMIT = 24;
+const UNDO_HISTORY_LIMIT = 12;
 const UNDO_CAPTURE_DEBOUNCE_MS = 260;
+const DRAWING_PERSIST_DEBOUNCE_MS = 400;
+const TIMETABLE_SAVE_DEBOUNCE_MS = 400;
 const CANVAS_TEXT_COLOR_PRESETS = {
   red: '#dc2626',
   blue: '#1d4ed8'
@@ -111,6 +113,9 @@ let redoStack = [];
 let undoCaptureTimer = null;
 let startupRecoveryFinished = false;
 let hasUnsavedChanges = false;
+let timetableSaveTimer = null;
+const drawingPersistTimers = new Map();
+const drawingRenderTokens = new Map();
 
 class TabData {
   constructor(id, title) {
@@ -120,6 +125,8 @@ class TabData {
     this.content = '';
     this.formatState = { ...DEFAULT_FORMAT_STATE };
     this.drawingData = null;
+    this.drawingFile = null;
+    this.resizeObserver = null;
     this.canvasItems = [];
     this.backgroundPreset = 'plain';
     this.viewState = {
@@ -134,6 +141,37 @@ class TabData {
 
 function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
+}
+
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function drawingFileName(tabId, prefix = 'tab') {
+  const safeId = String(tabId).replace(/[^a-zA-Z0-9._-]/g, '_');
+  return `${prefix}-${safeId}.png`;
+}
+
+function isDrawingDataUrl(value) {
+  return typeof value === 'string' && value.startsWith('data:image/');
+}
+
+function disposeAllTabs() {
+  tabs.forEach((tabData, tabId) => {
+    tabData.resizeObserver?.disconnect();
+    if (drawingPersistTimers.has(tabId)) {
+      clearTimeout(drawingPersistTimers.get(tabId));
+      drawingPersistTimers.delete(tabId);
+    }
+  });
+  drawingStates.clear();
+  laserStates.clear();
+  lassoStates.clear();
+  drawingRenderTokens.clear();
 }
 
 function getSteppedFontSize(currentSize, direction) {
@@ -179,6 +217,44 @@ function stepFontSizeForTab(tabId, direction) {
   const currentSize = textFormatter.getCurrentFormat(dom.chalkboard).fontSize || 72;
   const nextSize = getSteppedFontSize(currentSize, direction);
   applyFontSizeForTab(tabId, nextSize);
+}
+
+function scaleChalkboardText(tabId, direction) {
+  const dom = getTabDom(tabId);
+  const chalkboard = dom.chalkboard;
+  if (!chalkboard || isCanvasTab(tabId)) {
+    return;
+  }
+
+  const rootComputed = parseInt(window.getComputedStyle(chalkboard).fontSize, 10) || 72;
+  const rootCurrent = parseInt(chalkboard.style.fontSize, 10) || rootComputed;
+  const rootNext = getSteppedFontSize(rootCurrent, direction);
+  chalkboard.style.fontSize = `${rootNext}px`;
+  chalkboard.style.setProperty('--typing-font-size', `${rootNext}px`);
+  chalkboard.style.lineHeight = textFormatter.calculateLineHeight(rootNext);
+  textFormatter.setTypingFormat(chalkboard, { fontSize: rootNext });
+
+  chalkboard.querySelectorAll('span').forEach((span) => {
+    if (!span.style.fontSize) {
+      return;
+    }
+    const current = parseInt(span.style.fontSize, 10);
+    if (!Number.isFinite(current)) {
+      return;
+    }
+    const next = getSteppedFontSize(current, direction);
+    span.style.fontSize = `${next}px`;
+    span.style.lineHeight = textFormatter.calculateLineHeight(next);
+  });
+
+  const tabData = tabs.get(tabId);
+  if (tabData) {
+    tabData.formatState.fontSize = rootNext;
+    tabData.content = chalkboard.innerHTML;
+  }
+
+  updateToolbarState(tabId);
+  markDirty();
 }
 
 function getPalette() {
@@ -386,6 +462,16 @@ function restoreCanvasItems(tabId) {
   });
 }
 
+function nextCanvasItemPosition(tabId, baseX, baseY) {
+  const dom = getTabDom(tabId);
+  const count = dom.objectLayer ? dom.objectLayer.querySelectorAll('.canvas-object').length : 0;
+  const step = 32;
+  return {
+    x: baseX + ((count * step) % 256),
+    y: baseY + ((count * step) % 192)
+  };
+}
+
 function addCanvasItem(tabId, item) {
   if (!isCanvasTab(tabId)) {
     return;
@@ -397,17 +483,19 @@ function addCanvasItem(tabId, item) {
   if (item?.type !== 'image' && item?.type !== 'text') {
     return;
   }
-  dom.objectLayer.appendChild(createCanvasObjectElement(item));
+  const object = createCanvasObjectElement(item);
+  dom.objectLayer.appendChild(object);
   syncCanvasItemsFromDom(tabId);
   markDirty();
 }
 
 function addCanvasImageFromData(tabId, dataUrl) {
+  const position = nextCanvasItemPosition(tabId, 80, 80);
   addCanvasItem(tabId, {
     id: createCanvasObjectId(),
     type: 'image',
-    x: 80,
-    y: 80,
+    x: position.x,
+    y: position.y,
     width: 420,
     height: 280,
     src: dataUrl
@@ -415,11 +503,12 @@ function addCanvasImageFromData(tabId, dataUrl) {
 }
 
 function addCanvasTextBox(tabId) {
+  const position = nextCanvasItemPosition(tabId, 100, 90);
   addCanvasItem(tabId, {
     id: createCanvasObjectId(),
     type: 'text',
-    x: 100,
-    y: 90,
+    x: position.x,
+    y: position.y,
     width: 360,
     height: 220,
     html: '텍스트 입력',
@@ -972,15 +1061,12 @@ function setupCanvasObjectLayerHandlers(tabId) {
     }
 
     const resizeHandle = target.closest('.canvas-object-resize');
-    const handle = target.closest('.canvas-object-handle');
-    if (!handle && !resizeHandle) {
-      return;
-    }
-    const object = (handle || resizeHandle).closest('.canvas-object');
+    const object = target.closest('.canvas-object');
     if (!object) {
       return;
     }
 
+    object.parentElement?.appendChild(object);
     hideInlineTextToolbar(true);
     closeAllTextBgPalettes();
 
@@ -1113,7 +1199,7 @@ function getBoardBackgroundColor(tabData) {
   return BACKGROUND_BASE_COLORS[tabData.backgroundPreset] || BACKGROUND_BASE_COLORS.plain;
 }
 
-function serializeTabs() {
+function serializeTabs(options = {}) {
   captureAllTabContents();
 
   const serialized = {};
@@ -1124,7 +1210,8 @@ function serializeTabs() {
       kind: tabData.kind,
       content: tabData.content,
       formatState: tabData.formatState,
-      drawingData: tabData.drawingData,
+      drawingFile: tabData.drawingFile || drawingFileName(tabId),
+      drawingData: options.embedDrawings && isDrawingDataUrl(tabData.drawingData) ? tabData.drawingData : null,
       canvasItems: tabData.canvasItems,
       backgroundPreset: tabData.backgroundPreset,
       viewState: tabData.viewState
@@ -1145,13 +1232,13 @@ function captureTimetableItems() {
   }));
 }
 
-function captureSnapshotState() {
+function captureSnapshotState(options = {}) {
   return {
     id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
     createdAt: Date.now(),
     activeTabId,
     tabCounter,
-    tabs: serializeTabs(),
+    tabs: serializeTabs({ embedDrawings: Boolean(options.embedDrawings) }),
     timetable: captureTimetableItems(),
     settings: { ...appSettings }
   };
@@ -1165,7 +1252,7 @@ function cloneSerializableState(value) {
 }
 
 function captureUndoHistoryState() {
-  const snapshot = captureSnapshotState();
+  const snapshot = captureSnapshotState({ embedDrawings: true });
   return {
     activeTabId: snapshot.activeTabId,
     tabCounter: snapshot.tabCounter,
@@ -1231,12 +1318,10 @@ async function applyCapturedState(state) {
   isApplyingUndoRedo = true;
 
   try {
+    disposeAllTabs();
     tabs.clear();
     tabCounter = 0;
     activeTabId = null;
-    drawingStates.clear();
-    laserStates.clear();
-    lassoStates.clear();
 
     document.querySelector('.tabs-wrapper').innerHTML = '';
     document.getElementById('tabContents').innerHTML = '';
@@ -1310,21 +1395,40 @@ async function redoLastUndo() {
   return applyCapturedState(cloneSerializableState(next));
 }
 
+async function persistLiveDrawingsToDisk() {
+  if (!window.storageAPI?.saveDrawing) {
+    return;
+  }
+
+  const jobs = [];
+  tabs.forEach((tabData, tabId) => {
+    if (!isDrawingDataUrl(tabData.drawingData)) {
+      return;
+    }
+    const fileName = tabData.drawingFile || drawingFileName(tabId);
+    tabData.drawingFile = fileName;
+    jobs.push(window.storageAPI.saveDrawing(fileName, tabData.drawingData));
+  });
+  await Promise.all(jobs);
+}
+
 async function saveAllTabsData() {
+  await persistLiveDrawingsToDisk();
   const dataToSave = {
-    tabs: serializeTabs(),
+    tabs: serializeTabs({ embedDrawings: false }),
     activeTabId,
     tabCounter
   };
 
+  const payload = JSON.stringify(dataToSave);
   try {
     if (window.storageAPI) {
-      const success = await window.storageAPI.setItem('chalkboard-data', JSON.stringify(dataToSave));
-      if (!success) {
-        localStorage.setItem('chalkboard-data', JSON.stringify(dataToSave));
+      const success = await window.storageAPI.setItem('chalkboard-data', payload);
+      if (!success && payload.length < 4_000_000) {
+        localStorage.setItem('chalkboard-data', payload);
       }
-    } else {
-      localStorage.setItem('chalkboard-data', JSON.stringify(dataToSave));
+    } else if (payload.length < 4_000_000) {
+      localStorage.setItem('chalkboard-data', payload);
     }
   } catch (error) {
     console.error('Chalkboard data save error:', error);
@@ -1349,6 +1453,7 @@ async function loadAllTabsData() {
       return false;
     }
 
+    disposeAllTabs();
     tabs.clear();
     tabCounter = 0;
     activeTabId = null;
@@ -1377,16 +1482,27 @@ async function loadAllTabsData() {
   }
 }
 
+function scheduleTimetableSave() {
+  if (timetableSaveTimer) {
+    clearTimeout(timetableSaveTimer);
+  }
+  timetableSaveTimer = setTimeout(() => {
+    timetableSaveTimer = null;
+    saveTimetable();
+  }, TIMETABLE_SAVE_DEBOUNCE_MS);
+}
+
 async function saveTimetable() {
   const items = captureTimetableItems();
+  const payload = JSON.stringify(items);
   try {
     if (window.storageAPI) {
-      const success = await window.storageAPI.setItem('timetable-data', JSON.stringify(items));
-      if (!success) {
-        localStorage.setItem('timetable-data', JSON.stringify(items));
+      const success = await window.storageAPI.setItem('timetable-data', payload);
+      if (!success && payload.length < 4_000_000) {
+        localStorage.setItem('timetable-data', payload);
       }
-    } else {
-      localStorage.setItem('timetable-data', JSON.stringify(items));
+    } else if (payload.length < 4_000_000) {
+      localStorage.setItem('timetable-data', payload);
     }
   } catch (error) {
     console.error('Timetable data save error:', error);
@@ -1399,7 +1515,7 @@ function appendTimetableItem(item, index) {
   itemDiv.className = 'timetable-item';
   itemDiv.innerHTML = `
     <div class="timetable-number">${index + 1}</div>
-    <input type="text" class="timetable-subject" value="${item.subject || ''}" placeholder="과목명을 입력하세요">
+    <input type="text" class="timetable-subject" value="${escapeHtml(item.subject || '')}" placeholder="과목명을 입력하세요">
     <input type="checkbox" class="timetable-checkbox" ${item.checked ? 'checked' : ''}>
   `;
 
@@ -1407,11 +1523,11 @@ function appendTimetableItem(item, index) {
   const checkbox = itemDiv.querySelector('.timetable-checkbox');
   subjectInput.addEventListener('input', () => {
     markDirty();
-    saveTimetable();
+    scheduleTimetableSave();
   });
   checkbox.addEventListener('change', () => {
     markDirty();
-    saveTimetable();
+    scheduleTimetableSave();
   });
 
   timetableList.appendChild(itemDiv);
@@ -1520,9 +1636,31 @@ async function loadSnapshots() {
   }
 }
 
+async function persistSnapshotDrawings(snapshot) {
+  if (!window.storageAPI?.saveDrawing || !snapshot?.tabs) {
+    return;
+  }
+
+  const jobs = [];
+  Object.values(snapshot.tabs).forEach((tabObj) => {
+    if (!isDrawingDataUrl(tabObj.drawingData)) {
+      return;
+    }
+    const fileName = drawingFileName(tabObj.id, `snap-${snapshot.id}`);
+    tabObj.drawingFile = fileName;
+    jobs.push(
+      window.storageAPI.saveDrawing(fileName, tabObj.drawingData).then(() => {
+        tabObj.drawingData = null;
+      })
+    );
+  });
+  await Promise.all(jobs);
+}
+
 async function createSnapshot(reason = '자동') {
-  const snapshot = captureSnapshotState();
+  const snapshot = captureSnapshotState({ embedDrawings: true });
   snapshot.reason = reason;
+  await persistSnapshotDrawings(snapshot);
   snapshots.unshift(snapshot);
   snapshots = snapshots.slice(0, SNAPSHOT_LIMIT);
   await saveSnapshots();
@@ -1539,12 +1677,10 @@ async function restoreSnapshot(snapshotId, options = {}) {
   let restored = false;
 
   try {
+    disposeAllTabs();
     tabs.clear();
     tabCounter = 0;
     activeTabId = null;
-    drawingStates.clear();
-    laserStates.clear();
-    lassoStates.clear();
 
     document.querySelector('.tabs-wrapper').innerHTML = '';
     document.getElementById('tabContents').innerHTML = '';
@@ -1570,10 +1706,24 @@ async function restoreSnapshot(snapshotId, options = {}) {
     snapshotTimetable.forEach((item, index) => appendTimetableItem(item, index));
 
     if (snapshot.settings) {
-      appSettings = { ...appSettings, ...snapshot.settings };
+      const restoredSettings = cloneSerializableState(snapshot.settings);
+      appSettings = {
+        ...appSettings,
+        editLocked: Boolean(restoredSettings.editLocked),
+        maskEnabled: Boolean(restoredSettings.maskEnabled),
+        splitMode: Boolean(restoredSettings.splitMode),
+        splitTabId: restoredSettings.splitTabId || null,
+        highContrastTheme: Boolean(restoredSettings.highContrastTheme),
+        safePalette: restoredSettings.safePalette !== undefined ? Boolean(restoredSettings.safePalette) : appSettings.safePalette,
+        lowLatencyMode: Boolean(restoredSettings.lowLatencyMode),
+        touchOptimized: restoredSettings.touchOptimized !== undefined ? Boolean(restoredSettings.touchOptimized) : appSettings.touchOptimized,
+        performancePreset: restoredSettings.performancePreset || appSettings.performancePreset,
+        maskRevealPercent: restoredSettings.maskRevealPercent ?? appSettings.maskRevealPercent
+      };
       applySettingsToUI();
     }
 
+    updateTimetableLayout();
     await queuePersist({ skipSnapshot: true, force: true });
     restored = true;
   } catch (error) {
@@ -1661,6 +1811,11 @@ function markDirty(shouldSchedulePersist = true) {
 async function persistEverything(options = {}) {
   if (!hasUnsavedChanges && !options.snapshotReason && !options.force) {
     return;
+  }
+
+  if (timetableSaveTimer) {
+    clearTimeout(timetableSaveTimer);
+    timetableSaveTimer = null;
   }
 
   captureAllTabContents();
@@ -1786,6 +1941,9 @@ function setupWindowControls() {
   });
 
   addCanvasTabButton?.addEventListener('click', () => {
+    if (appSettings.drawColor.toLowerCase() === '#ffffff') {
+      appSettings.drawColor = '#111111';
+    }
     createTab(`캔버스 ${tabCounter + 1}`, { kind: 'canvas' });
     markDirty();
   });
@@ -1965,7 +2123,7 @@ function applySettingsToUI() {
   document.body.classList.toggle('low-latency', appSettings.lowLatencyMode);
   document.body.classList.toggle('touch-optimized', appSettings.touchOptimized);
   document.documentElement.style.setProperty('--sidebar-width', `${clamp(appSettings.sidebarWidth, 280, 760)}px`);
-  appSettings.maskRevealPercent = clamp(parseInt(appSettings.maskRevealPercent, 10) || 96, 80, 100);
+  appSettings.maskRevealPercent = clamp(parseInt(appSettings.maskRevealPercent, 10) || 96, 0, 100);
 
   const highContrastToggle = document.getElementById('highContrastToggle');
   const safePaletteToggle = document.getElementById('safePaletteToggle');
@@ -2070,6 +2228,8 @@ function updateTimetableLayout() {
 function toggleSidebar() {
   const sidebar = document.getElementById('sidebar');
   sidebar.classList.toggle('open');
+  document.body.classList.toggle('sidebar-open', sidebar.classList.contains('open'));
+  tabs.forEach((_, tabId) => resizeCanvas(tabId));
 }
 
 function addTimetableItem() {
@@ -2114,8 +2274,15 @@ function createTab(title, options = {}) {
   if (options.data) {
     tabData.content = options.data.content || '';
     tabData.formatState = { ...DEFAULT_FORMAT_STATE, ...(options.data.formatState || {}) };
-    tabData.drawingData = options.data.drawingData || null;
     tabData.canvasItems = Array.isArray(options.data.canvasItems) ? options.data.canvasItems : [];
+    const savedDrawing = options.data.drawingData;
+    if (isDrawingDataUrl(savedDrawing)) {
+      tabData.drawingData = savedDrawing;
+      tabData.drawingFile = options.data.drawingFile || drawingFileName(tabId);
+    } else {
+      tabData.drawingData = null;
+      tabData.drawingFile = options.data.drawingFile || (typeof savedDrawing === 'string' && savedDrawing ? savedDrawing : drawingFileName(tabId));
+    }
     tabData.backgroundPreset = options.data.backgroundPreset || 'plain';
     const savedScale = Number(options.data.viewState?.scale);
     const savedPanX = Number(options.data.viewState?.panX);
@@ -2154,7 +2321,7 @@ function createTabElement(tabId, title) {
   tabElement.className = 'tab';
   tabElement.dataset.tabId = tabId;
   tabElement.innerHTML = `
-    <span class="tab-title">${title}</span>
+    <span class="tab-title">${escapeHtml(title)}</span>
     <button class="tab-close" title="칠판 닫기">&times;</button>
   `;
 
@@ -2183,21 +2350,21 @@ function createTabContent(tabId) {
   contentElement.innerHTML = `
     <div class="toolbar ${isCanvas ? 'canvas-toolbar' : ''}" data-tab-id="${tabId}">
       <div class="toolbar-group">
-        <button id="boldBtn" class="format-btn" title="굵게 (Ctrl+B)">B</button>
-        <button id="italicBtn" class="format-btn" title="기울임 (Ctrl+I)">I</button>
-        <button id="underlineBtn" class="format-btn" title="밑줄 (Ctrl+U)">U</button>
+        <button type="button" class="format-btn" data-format="bold" title="굵게 (Ctrl+B)">B</button>
+        <button type="button" class="format-btn" data-format="italic" title="기울임 (Ctrl+I)">I</button>
+        <button type="button" class="format-btn" data-format="underline" title="밑줄 (Ctrl+U)">U</button>
       </div>
 
       <div class="divider"></div>
 
       <div class="color-picker-container">
-        <button id="colorButton" class="color-button" title="글자색">
+        <button type="button" class="color-button" title="글자색">
           <div class="color-preview" style="background-color: #ffffff;"></div>
         </button>
         <div class="predefined-colors">
           <div class="predefined-colors-grid"></div>
           <div class="color-more" title="더 많은 색상">
-            <input type="color" id="colorPicker" value="#ffffff" class="hidden-color-picker">
+            <input type="color" class="color-picker hidden-color-picker" value="#ffffff">
             더 보기
           </div>
         </div>
@@ -2206,35 +2373,16 @@ function createTabContent(tabId) {
       <div class="divider"></div>
 
       <div class="font-size-control">
-        <label for="fontSizeInput" class="font-size-label">크기:</label>
+        <span class="font-size-label">크기:</span>
         <div class="font-size-input-group">
-          <input type="number" id="fontSizeInput" class="font-size-input" value="72" min="8" max="200">
+          <input type="number" class="font-size-input" value="72" min="8" max="200">
           <div class="font-size-stepper">
-            <button id="fontSizeDown" class="font-size-step-btn">-</button>
-            <button id="fontSizeUp" class="font-size-step-btn">+</button>
+            <button type="button" class="font-size-step-btn font-size-down">-</button>
+            <button type="button" class="font-size-step-btn font-size-up">+</button>
           </div>
         </div>
-        <select id="fontSizeSelect" class="font-size-select">
-          <option value="16">16px</option>
-          <option value="18">18px</option>
-          <option value="20">20px</option>
-          <option value="24">24px</option>
-          <option value="30">30px</option>
-          <option value="36">36px</option>
-          <option value="42">42px</option>
-          <option value="48">48px</option>
-          <option value="56">56px</option>
-          <option value="64">64px</option>
-          <option value="72" selected>72px</option>
-          <option value="84">84px</option>
-          <option value="96">96px</option>
-          <option value="112">112px</option>
-          <option value="120">120px</option>
-          <option value="128">128px</option>
-          <option value="144">144px</option>
-          <option value="160">160px</option>
-          <option value="180">180px</option>
-          <option value="200">200px</option>
+        <select class="font-size-select">
+          ${FONT_SIZE_STEPS.map((size) => `<option value="${size}" ${size === 72 ? 'selected' : ''}>${size}px</option>`).join('')}
         </select>
       </div>
 
@@ -2351,22 +2499,17 @@ function switchToTab(tabId) {
   activeTabId = tabId;
 
   if (targetTab?.kind === 'canvas') {
-    if (appSettings.drawColor.toLowerCase() === '#ffffff') {
-      appSettings.drawColor = '#111111';
-    }
     if (appSettings.activeTool === 'text') {
       setActiveTool('pen', { markDirty: false });
     } else {
       syncDrawControls();
       applyAllInteractionStates();
     }
+  } else if (appSettings.activeTool !== 'text') {
+    setActiveTool('text', { markDirty: false });
   } else {
-    if (appSettings.activeTool !== 'text') {
-      setActiveTool('text', { markDirty: false });
-    } else {
-      syncDrawControls();
-      applyAllInteractionStates();
-    }
+    syncDrawControls();
+    applyAllInteractionStates();
   }
 
   document.querySelectorAll('.tab').forEach((tabElement) => {
@@ -2389,10 +2532,21 @@ function closeTab(tabId) {
     return;
   }
 
+  const tabData = tabs.get(tabId);
+  tabData?.resizeObserver?.disconnect();
+  if (drawingPersistTimers.has(tabId)) {
+    clearTimeout(drawingPersistTimers.get(tabId));
+    drawingPersistTimers.delete(tabId);
+  }
+  if (tabData?.drawingFile && window.storageAPI?.deleteDrawing) {
+    window.storageAPI.deleteDrawing(tabData.drawingFile);
+  }
+
   tabs.delete(tabId);
   drawingStates.delete(tabId);
   laserStates.delete(tabId);
   lassoStates.delete(tabId);
+  drawingRenderTokens.delete(tabId);
 
   document.querySelector(`.tab[data-tab-id="${tabId}"]`)?.remove();
   document.querySelector(`.tab-content[data-tab-id="${tabId}"]`)?.remove();
@@ -2435,17 +2589,24 @@ function loadTabContent(tabId) {
   }
 
   dom.chalkboard.innerHTML = tabData.content || '';
-  dom.chalkboard.dataset.currentFormat = JSON.stringify(tabData.formatState || DEFAULT_FORMAT_STATE);
-  if (tabData.formatState?.color) {
-    dom.chalkboard.style.color = tabData.formatState.color;
+  const formatState = tabData.formatState || DEFAULT_FORMAT_STATE;
+  dom.chalkboard.dataset.currentFormat = JSON.stringify(formatState);
+  if (formatState.color) {
+    dom.chalkboard.style.setProperty('--typing-color', formatState.color);
+    if (!dom.chalkboard.textContent.trim()) {
+      dom.chalkboard.style.color = formatState.color;
+    }
   }
-  if (tabData.formatState?.fontSize) {
-    dom.chalkboard.style.fontSize = `${tabData.formatState.fontSize}px`;
-    dom.chalkboard.style.lineHeight = textFormatter.calculateLineHeight(tabData.formatState.fontSize);
+  if (formatState.fontSize) {
+    dom.chalkboard.style.setProperty('--typing-font-size', `${formatState.fontSize}px`);
+    dom.chalkboard.style.lineHeight = textFormatter.calculateLineHeight(formatState.fontSize);
+    if (!dom.chalkboard.textContent.trim()) {
+      dom.chalkboard.style.fontSize = `${formatState.fontSize}px`;
+    }
   }
 
   restoreCanvasItems(tabId);
-  renderDrawingData(tabId);
+  hydrateDrawingForTab(tabId);
 }
 
 function applyTabBackground(tabId) {
@@ -2530,16 +2691,16 @@ function setupTabEventListeners(tabId) {
 
   const toolbar = dom.toolbar;
   const chalkboard = dom.chalkboard;
-  const boldBtn = toolbar.querySelector('#boldBtn');
-  const italicBtn = toolbar.querySelector('#italicBtn');
-  const underlineBtn = toolbar.querySelector('#underlineBtn');
-  const colorButton = toolbar.querySelector('#colorButton');
-  const colorPicker = toolbar.querySelector('#colorPicker');
+  const boldBtn = toolbar.querySelector('[data-format="bold"]');
+  const italicBtn = toolbar.querySelector('[data-format="italic"]');
+  const underlineBtn = toolbar.querySelector('[data-format="underline"]');
+  const colorButton = toolbar.querySelector('.color-button');
+  const colorPicker = toolbar.querySelector('.color-picker');
   const colorPreview = toolbar.querySelector('.color-preview');
-  const fontSizeInput = toolbar.querySelector('#fontSizeInput');
-  const fontSizeSelect = toolbar.querySelector('#fontSizeSelect');
-  const fontSizeUp = toolbar.querySelector('#fontSizeUp');
-  const fontSizeDown = toolbar.querySelector('#fontSizeDown');
+  const fontSizeInput = toolbar.querySelector('.font-size-input');
+  const fontSizeSelect = toolbar.querySelector('.font-size-select');
+  const fontSizeUp = toolbar.querySelector('.font-size-up');
+  const fontSizeDown = toolbar.querySelector('.font-size-down');
   const drawToolSelect = toolbar.querySelector('.draw-tool-select');
   const drawColorInput = toolbar.querySelector('.draw-color-input');
   const drawSizeInput = toolbar.querySelector('.draw-size-input');
@@ -2811,6 +2972,18 @@ function setupTabEventListeners(tabId) {
     markDirty();
   });
 
+  chalkboard.addEventListener('keydown', (event) => {
+    if (appSettings.editLocked || event.ctrlKey || event.metaKey || event.altKey) {
+      return;
+    }
+    if (textFormatter.isComposing || event.isComposing || event.keyCode === 229) {
+      return;
+    }
+    if (event.key.length === 1 || event.key === 'Enter') {
+      textFormatter.ensureTypingSpan(chalkboard);
+    }
+  });
+
   chalkboard.addEventListener('input', (event) => {
     if (appSettings.editLocked) {
       return;
@@ -2819,6 +2992,7 @@ function setupTabEventListeners(tabId) {
     const tabData = tabs.get(tabId);
     if (tabData) {
       tabData.content = chalkboard.innerHTML;
+      Object.assign(tabData.formatState, textFormatter.getStoredFormat(chalkboard));
     }
     markDirty();
   });
@@ -2844,21 +3018,22 @@ function setupTabEventListeners(tabId) {
   });
 
   chalkboard.addEventListener('keydown', (event) => {
-    if (!event.ctrlKey) {
+    if (!(event.ctrlKey || event.metaKey) || event.altKey) {
       return;
     }
 
-    if (event.key === 'b') {
+    const key = event.key.toLowerCase();
+    if (key === 'b') {
       event.preventDefault();
       textFormatter.toggleFormat(chalkboard, 'fontWeight');
       updateToolbarState(tabId);
       markDirty();
-    } else if (event.key === 'i') {
+    } else if (key === 'i') {
       event.preventDefault();
       textFormatter.toggleFormat(chalkboard, 'fontStyle');
       updateToolbarState(tabId);
       markDirty();
-    } else if (event.key === 'u') {
+    } else if (key === 'u') {
       event.preventDefault();
       textFormatter.toggleFormat(chalkboard, 'textDecoration');
       updateToolbarState(tabId);
@@ -2873,30 +3048,38 @@ function setupTabEventListeners(tabId) {
 
     const clipboardItems = [...(event.clipboardData?.items || [])];
     const imageItem = clipboardItems.find((item) => item.type.startsWith('image/'));
-    if (!imageItem) {
-      return;
-    }
-
-    event.preventDefault();
-    const file = imageItem.getAsFile();
-    if (!file) {
-      return;
-    }
-
-    const reader = new FileReader();
-    reader.onload = () => {
-      if (isCanvasTab(tabId)) {
-        addCanvasImageFromData(tabId, reader.result);
+    if (imageItem) {
+      event.preventDefault();
+      const file = imageItem.getAsFile();
+      if (!file) {
         return;
       }
-      const image = document.createElement('img');
-      image.className = 'chalk-image';
-      image.src = reader.result;
-      image.alt = '붙여넣은 이미지';
-      insertNodeAtCursor(chalkboard, image);
-      markDirty();
-    };
-    reader.readAsDataURL(file);
+
+      const reader = new FileReader();
+      reader.onload = () => {
+        if (isCanvasTab(tabId)) {
+          addCanvasImageFromData(tabId, reader.result);
+          return;
+        }
+        const image = document.createElement('img');
+        image.className = 'chalk-image';
+        image.src = reader.result;
+        image.alt = '붙여넣은 이미지';
+        insertNodeAtCursor(chalkboard, image);
+        markDirty();
+      };
+      reader.readAsDataURL(file);
+      return;
+    }
+
+    const text = event.clipboardData?.getData('text/plain');
+    if (!text) {
+      return;
+    }
+    event.preventDefault();
+    textFormatter.ensureTypingSpan(chalkboard);
+    insertTextAtCursor(chalkboard, text);
+    markDirty();
   });
 
   chalkboard.addEventListener('dragover', (event) => {
@@ -2937,7 +3120,7 @@ function setupTabEventListeners(tabId) {
 
 function renderPaletteForToolbar(toolbar, tabId) {
   const grid = toolbar.querySelector('.predefined-colors-grid');
-  const colorPicker = toolbar.querySelector('#colorPicker');
+  const colorPicker = toolbar.querySelector('.color-picker');
   const colorPreview = toolbar.querySelector('.color-preview');
   const chalkboard = toolbar.closest('.tab-content')?.querySelector('.chalkboard');
   if (!grid || !chalkboard) {
@@ -3006,11 +3189,11 @@ function updateToolbarState(tabId) {
   const currentFormat = textFormatter.getCurrentFormat(dom.chalkboard);
   Object.assign(tabData.formatState, currentFormat);
 
-  dom.toolbar.querySelector('#boldBtn')?.classList.toggle('active', currentFormat.fontWeight === 'bold');
-  dom.toolbar.querySelector('#italicBtn')?.classList.toggle('active', currentFormat.fontStyle === 'italic');
-  dom.toolbar.querySelector('#underlineBtn')?.classList.toggle('active', currentFormat.textDecoration === 'underline');
+  dom.toolbar.querySelector('[data-format="bold"]')?.classList.toggle('active', currentFormat.fontWeight === 'bold');
+  dom.toolbar.querySelector('[data-format="italic"]')?.classList.toggle('active', currentFormat.fontStyle === 'italic');
+  dom.toolbar.querySelector('[data-format="underline"]')?.classList.toggle('active', currentFormat.textDecoration === 'underline');
 
-  const colorPicker = dom.toolbar.querySelector('#colorPicker');
+  const colorPicker = dom.toolbar.querySelector('.color-picker');
   const colorPreview = dom.toolbar.querySelector('.color-preview');
   if (colorPicker) {
     colorPicker.value = currentFormat.color;
@@ -3019,8 +3202,8 @@ function updateToolbarState(tabId) {
     colorPreview.style.backgroundColor = currentFormat.color;
   }
 
-  const fontSizeInput = dom.toolbar.querySelector('#fontSizeInput');
-  const fontSizeSelect = dom.toolbar.querySelector('#fontSizeSelect');
+  const fontSizeInput = dom.toolbar.querySelector('.font-size-input');
+  const fontSizeSelect = dom.toolbar.querySelector('.font-size-select');
   if (fontSizeInput && document.activeElement !== fontSizeInput) {
     fontSizeInput.value = String(currentFormat.fontSize);
   }
@@ -3087,6 +3270,9 @@ function initializeCanvas(tabId) {
     pointerId: null,
     startX: 0,
     startY: 0,
+    lastX: 0,
+    lastY: 0,
+    useOverlayPreview: false,
     baseImage: null
   });
   ensureLaserState(tabId);
@@ -3223,7 +3409,7 @@ function resizeCanvas(tabId) {
   const width = worldSize.worldWidth;
   const height = worldSize.worldHeight;
 
-  const devicePixelRatio = isCanvas ? 1 : (window.devicePixelRatio || 1);
+  const devicePixelRatio = getTabPixelRatio(tabId);
   const laserPixelRatio = 1;
   const targetWidth = Math.floor(width * devicePixelRatio);
   const targetHeight = Math.floor(height * devicePixelRatio);
@@ -3239,6 +3425,14 @@ function resizeCanvas(tabId) {
   );
 
   if (!sizeUnchanged) {
+    if (isCanvas && dom.canvas.width > 1 && dom.canvas.height > 1) {
+      try {
+        tabData.drawingData = dom.canvas.toDataURL('image/png');
+        tabData.drawingFile = tabData.drawingFile || drawingFileName(tabId);
+      } catch (error) {
+        console.warn('Could not snapshot canvas before resize:', error);
+      }
+    }
     dom.canvas.width = targetWidth;
     dom.canvas.height = targetHeight;
     dom.laserCanvas.width = laserTargetWidth;
@@ -3271,7 +3465,7 @@ function resizeCanvas(tabId) {
     return;
   }
 
-  const ctx = dom.canvas.getContext('2d');
+  const ctx = dom.canvas.getContext('2d', { willReadFrequently: true });
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, dom.canvas.width, dom.canvas.height);
   ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
@@ -3284,6 +3478,29 @@ function resizeCanvas(tabId) {
   applyViewTransform(tabId);
 }
 
+function getTabPixelRatio(tabId) {
+  const ratio = window.devicePixelRatio || 1;
+  if (isCanvasTab(tabId)) {
+    return Math.min(ratio, 1.5);
+  }
+  return ratio;
+}
+
+async function hydrateDrawingForTab(tabId) {
+  const tabData = tabs.get(tabId);
+  if (!tabData) {
+    return;
+  }
+
+  if (!isDrawingDataUrl(tabData.drawingData) && tabData.drawingFile && window.storageAPI?.loadDrawing) {
+    const loaded = await window.storageAPI.loadDrawing(tabData.drawingFile);
+    if (loaded) {
+      tabData.drawingData = loaded;
+    }
+  }
+  renderDrawingData(tabId);
+}
+
 function renderDrawingData(tabId) {
   const tabData = tabs.get(tabId);
   const dom = getTabDom(tabId);
@@ -3291,15 +3508,18 @@ function renderDrawingData(tabId) {
     return;
   }
 
-  const ctx = dom.canvas.getContext('2d');
+  const ctx = dom.canvas.getContext('2d', { willReadFrequently: true });
   if (!ctx) {
     return;
   }
 
+  const token = (drawingRenderTokens.get(tabId) || 0) + 1;
+  drawingRenderTokens.set(tabId, token);
+
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, dom.canvas.width, dom.canvas.height);
 
-  if (!tabData.drawingData) {
+  if (!isDrawingDataUrl(tabData.drawingData)) {
     const dpr = getCanvasPixelRatio(tabId);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     return;
@@ -3307,6 +3527,9 @@ function renderDrawingData(tabId) {
 
   const image = new Image();
   image.onload = () => {
+    if (drawingRenderTokens.get(tabId) !== token) {
+      return;
+    }
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, dom.canvas.width, dom.canvas.height);
     ctx.drawImage(image, 0, 0, dom.canvas.width, dom.canvas.height);
@@ -3851,6 +4074,28 @@ function persistDrawingForTab(tabId) {
     return;
   }
   tabData.drawingData = dom.canvas.toDataURL('image/png');
+  tabData.drawingFile = tabData.drawingFile || drawingFileName(tabId);
+  scheduleDrawingFileSave(tabId);
+}
+
+function scheduleDrawingFileSave(tabId) {
+  if (!window.storageAPI?.saveDrawing) {
+    return;
+  }
+  if (drawingPersistTimers.has(tabId)) {
+    clearTimeout(drawingPersistTimers.get(tabId));
+  }
+  const timer = setTimeout(() => {
+    drawingPersistTimers.delete(tabId);
+    const tabData = tabs.get(tabId);
+    if (!tabData || !isDrawingDataUrl(tabData.drawingData)) {
+      return;
+    }
+    const fileName = tabData.drawingFile || drawingFileName(tabId);
+    tabData.drawingFile = fileName;
+    window.storageAPI.saveDrawing(fileName, tabData.drawingData);
+  }, DRAWING_PERSIST_DEBOUNCE_MS);
+  drawingPersistTimers.set(tabId, timer);
 }
 
 function canDrawOnTab(tabId) {
@@ -3893,12 +4138,7 @@ function setupDrawingHandlers(tabId) {
     if (!(event.target instanceof Element)) {
       return false;
     }
-    return Boolean(
-      event.target.closest('.canvas-object-handle') ||
-      event.target.closest('.canvas-object-remove') ||
-      event.target.closest('.canvas-object-resize') ||
-      event.target.closest('.canvas-text-content')
-    );
+    return Boolean(event.target.closest('.canvas-object'));
   };
 
   const finishDrawing = (event) => {
@@ -3931,16 +4171,19 @@ function setupDrawingHandlers(tabId) {
       return true;
     }
 
-    if (drawingState.baseImage) {
+    if (drawingState.useOverlayPreview) {
       const point = getPointerPointInCanvas(tabId, event);
       const ctx = dom.canvas.getContext('2d');
       configureDrawingContext(ctx, appSettings.activeTool);
-      ctx.putImageData(drawingState.baseImage, 0, 0);
       drawShape(ctx, appSettings.activeTool, drawingState.startX, drawingState.startY, point.x, point.y);
+      const overlayCtx = dom.lassoCanvas?.getContext('2d');
+      overlayCtx?.setTransform(1, 0, 0, 1, 0, 0);
+      overlayCtx?.clearRect(0, 0, dom.lassoCanvas.width, dom.lassoCanvas.height);
     }
 
     drawingState.isDrawing = false;
     drawingState.pointerId = null;
+    drawingState.useOverlayPreview = false;
     drawingState.baseImage = null;
     persistDrawingForTab(tabId);
     markDirty();
@@ -3948,8 +4191,15 @@ function setupDrawingHandlers(tabId) {
   };
 
   dom.stage.addEventListener('wheel', (event) => {
-    const thicknessWheelTools = new Set(['pen', 'highlighter', 'eraser', 'line', 'arrow', 'rect', 'circle', 'laser']);
-    if (isCanvasTab(tabId) && !event.ctrlKey && appSettings.activeTool !== 'pan' && thicknessWheelTools.has(appSettings.activeTool)) {
+    if (!isCanvasTab(tabId)) {
+      if (event.ctrlKey || event.metaKey) {
+        event.preventDefault();
+        scaleChalkboardText(tabId, event.deltaY < 0 ? 1 : -1);
+      }
+      return;
+    }
+
+    if (event.altKey) {
       event.preventDefault();
       const direction = event.deltaY < 0 ? 1 : -1;
       appSettings.drawSize = clamp((Number(appSettings.drawSize) || 6) + direction, 1, 36);
@@ -3958,9 +4208,22 @@ function setupDrawingHandlers(tabId) {
       return;
     }
 
-    if (!(event.ctrlKey || appSettings.activeTool === 'pan')) {
+    const shouldZoom = event.ctrlKey || event.metaKey || appSettings.activeTool === 'pan';
+    if (!shouldZoom) {
+      event.preventDefault();
+      const tabData = tabs.get(tabId);
+      if (!tabData) {
+        return;
+      }
+      tabData.viewState.panX -= event.deltaX;
+      tabData.viewState.panY -= event.deltaY;
+      maybeAutoExpandCanvasWorld(tabId);
+      clampCanvasPanToBounds(tabId);
+      applyViewTransform(tabId);
+      markDirty(false);
       return;
     }
+
     event.preventDefault();
 
     const tabData = tabs.get(tabId);
@@ -3995,6 +4258,7 @@ function setupDrawingHandlers(tabId) {
     }
 
     if (canDrawOnTab(tabId) && !shouldStartPan(event) && !isObjectControlTarget(event)) {
+      drawingRenderTokens.set(tabId, (drawingRenderTokens.get(tabId) || 0) + 1);
       const point = appSettings.activeTool === 'laser'
         ? getPointerPointInStage(tabId, event)
         : getPointerPointInCanvas(tabId, event);
@@ -4005,6 +4269,9 @@ function setupDrawingHandlers(tabId) {
       drawingState.pointerId = event.pointerId;
       drawingState.startX = point.x;
       drawingState.startY = point.y;
+      drawingState.lastX = point.x;
+      drawingState.lastY = point.y;
+      drawingState.useOverlayPreview = false;
       drawingState.baseImage = null;
 
       if (appSettings.activeTool === 'laser') {
@@ -4033,8 +4300,10 @@ function setupDrawingHandlers(tabId) {
       } else if (appSettings.activeTool === 'pen' || appSettings.activeTool === 'highlighter' || appSettings.activeTool === 'eraser') {
         ctx.beginPath();
         ctx.moveTo(point.x, point.y);
+        ctx.lineTo(point.x, point.y);
+        ctx.stroke();
       } else {
-        drawingState.baseImage = ctx.getImageData(0, 0, dom.canvas.width, dom.canvas.height);
+        drawingState.useOverlayPreview = true;
       }
 
       dom.stage.setPointerCapture(event.pointerId);
@@ -4100,11 +4369,20 @@ function setupDrawingHandlers(tabId) {
           renderLassoOverlay(tabId);
         }
       } else if (appSettings.activeTool === 'pen' || appSettings.activeTool === 'highlighter' || appSettings.activeTool === 'eraser') {
+        ctx.beginPath();
+        ctx.moveTo(drawingState.lastX, drawingState.lastY);
         ctx.lineTo(point.x, point.y);
         ctx.stroke();
-      } else if (drawingState.baseImage) {
-        ctx.putImageData(drawingState.baseImage, 0, 0);
-        drawShape(ctx, appSettings.activeTool, drawingState.startX, drawingState.startY, point.x, point.y);
+        drawingState.lastX = point.x;
+        drawingState.lastY = point.y;
+      } else if (drawingState.useOverlayPreview && dom.lassoCanvas) {
+        const overlayCtx = dom.lassoCanvas.getContext('2d');
+        const dpr = getCanvasPixelRatio(tabId);
+        overlayCtx.setTransform(1, 0, 0, 1, 0, 0);
+        overlayCtx.clearRect(0, 0, dom.lassoCanvas.width, dom.lassoCanvas.height);
+        overlayCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        configureDrawingContext(overlayCtx, appSettings.activeTool);
+        drawShape(overlayCtx, appSettings.activeTool, drawingState.startX, drawingState.startY, point.x, point.y);
       }
       event.preventDefault();
       return;
@@ -4217,8 +4495,13 @@ function applyViewTransform(tabId) {
   }
   if (isCanvasTab(tabId)) {
     clampCanvasPanToBounds(tabId);
+    dom.transform.style.transform = `translate(${tabData.viewState.panX}px, ${tabData.viewState.panY}px) scale(${tabData.viewState.scale})`;
+    return;
   }
-  dom.transform.style.transform = `translate(${tabData.viewState.panX}px, ${tabData.viewState.panY}px) scale(${tabData.viewState.scale})`;
+  tabData.viewState.scale = 1;
+  tabData.viewState.panX = 0;
+  tabData.viewState.panY = 0;
+  dom.transform.style.transform = 'none';
 }
 
 function updateMaskOverlay(tabId) {
@@ -4232,11 +4515,14 @@ function updateMaskOverlay(tabId) {
     return;
   }
 
-  const opacity = clamp(appSettings.maskRevealPercent, 80, 100) / 100;
+  const covered = clamp(appSettings.maskRevealPercent, 0, 100);
   dom.maskOverlay.classList.add('active');
-  dom.maskOverlay.style.top = '0';
-  dom.maskOverlay.style.height = '100%';
-  dom.maskOverlay.style.opacity = String(opacity);
+  dom.maskOverlay.style.left = '0';
+  dom.maskOverlay.style.right = '0';
+  dom.maskOverlay.style.bottom = 'auto';
+  dom.maskOverlay.style.top = `${100 - covered}%`;
+  dom.maskOverlay.style.height = `${covered}%`;
+  dom.maskOverlay.style.opacity = '1';
 }
 
 function updateAllOverlays() {
@@ -4358,6 +4644,9 @@ function setupGlobalDocumentHandlers() {
     }
 
     if (primaryModifier && event.key.toLowerCase() === 'z' && !isInputControl) {
+      if (activeElement && activeElement.isContentEditable) {
+        return;
+      }
       event.preventDefault();
       if (event.shiftKey) {
         redoLastUndo();
@@ -4465,11 +4754,23 @@ function adjustActiveFontSize(delta) {
   }
 
   const direction = delta >= 0 ? 1 : -1;
+  const selection = window.getSelection();
+  const hasTextSelection = Boolean(
+    selection &&
+    selection.rangeCount > 0 &&
+    !selection.getRangeAt(0).collapsed &&
+    dom.chalkboard.contains(selection.getRangeAt(0).commonAncestorContainer)
+  );
+
   saveSelection();
-  stepFontSizeForTab(activeTabId, direction);
+  if (hasTextSelection) {
+    stepFontSizeForTab(activeTabId, direction);
+    return;
+  }
+  scaleChalkboardText(activeTabId, direction);
 }
 
-async function runStartupRecoveryIfNeeded() {
+async function runStartupRecoveryIfNeeded(hasLoadedTabs) {
   if (startupRecoveryFinished || !window.electronAPI?.getStartupState) {
     return;
   }
@@ -4477,7 +4778,7 @@ async function runStartupRecoveryIfNeeded() {
 
   try {
     const startupState = await window.electronAPI.getStartupState();
-    if (startupState?.wasUncleanExit && snapshots.length > 0) {
+    if (!hasLoadedTabs && startupState?.wasUncleanExit && snapshots.length > 0) {
       await restoreSnapshot(snapshots[0].id, { silent: true });
     }
   } catch (error) {
@@ -4505,7 +4806,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   await loadTimetable();
   startAutoPersistenceLoops();
-  await runStartupRecoveryIfNeeded();
+  await runStartupRecoveryIfNeeded(loadedTabs);
   resetUndoHistory();
   pushUndoCheckpoint();
 

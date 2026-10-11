@@ -291,7 +291,7 @@ body.theme-high-contrast {
   position: absolute;
   inset: 0;
   background: transparent !important;
-  font-size: 72px;
+  font-size: var(--typing-font-size, 72px);
   padding: 1.5rem 2rem !important;
   line-height: 1.3;
   overflow: auto;
@@ -377,6 +377,7 @@ body.theme-high-contrast {
   box-shadow: 0 8px 20px rgba(0, 0, 0, 0.35);
   overflow: hidden;
   pointer-events: none;
+  cursor: grab;
 }
 
 .canvas-object-layer.interactive .canvas-object {
@@ -514,7 +515,7 @@ body.theme-high-contrast {
 .canvas-text-content {
   width: 100%;
   height: 100%;
-  color: #ffffff;
+  color: #111827;
   font-size: 24px;
   line-height: 1.35;
   padding: 0.65rem;
@@ -522,6 +523,7 @@ body.theme-high-contrast {
   overflow: auto;
   white-space: pre-wrap;
   word-break: break-word;
+  cursor: text;
 }
 
 .canvas-text-inline-toolbar {
@@ -785,7 +787,7 @@ body.theme-high-contrast {
   right: var(--sidebar-width);
 }
 
-.sidebar.open ~ #tabContents .tab-content {
+body.sidebar-open #tabContents {
   margin-right: var(--sidebar-width);
 }
 

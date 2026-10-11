@@ -33,5 +33,29 @@ contextBridge.exposeInMainWorld('storageAPI', {
       console.error('데이터 로드 오류:', error);
       return null;
     }
+  },
+  saveDrawing: async (name, dataUrl) => {
+    try {
+      return await ipcRenderer.invoke('save-drawing', name, dataUrl);
+    } catch (error) {
+      console.error('그림 저장 오류:', error);
+      return false;
+    }
+  },
+  loadDrawing: async (name) => {
+    try {
+      return await ipcRenderer.invoke('load-drawing', name);
+    } catch (error) {
+      console.error('그림 로드 오류:', error);
+      return null;
+    }
+  },
+  deleteDrawing: async (name) => {
+    try {
+      return await ipcRenderer.invoke('delete-drawing', name);
+    } catch (error) {
+      console.error('그림 삭제 오류:', error);
+      return false;
+    }
   }
 });

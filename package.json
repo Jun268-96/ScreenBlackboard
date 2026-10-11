@@ -6,6 +6,7 @@
   "scripts": {
     "start": "electron .",
     "dev": "electron . --dev",
+    "test:smoke": "electron scripts/smoke-test-main.js",
     "package": "npx @electron/packager . ScreenBlackboard --platform=win32 --arch=x64 --out=dist --icon=icons/favicon.ico --overwrite --asar --prune=true --executable-name=ScreenBlackboard",
     "build": "electron-builder --win --x64",
     "clean": "rm -rf dist/deploy dist/win-unpacked dist/.icon-ico dist/builder-debug.yml dist/*.blockmap",
@@ -39,7 +40,10 @@
       "!**/node_modules/.bin",
       "!**/.{idea,git,cache,build,output,output.css,log,logs,temp}",
       "!**/{.DS_Store,.git,.hg,.svn,CVS,RCS,SCCS,__pycache__,thumbs.db,.gitignore,.gitattributes}",
-      "!**/{*.yaml,*.yml,nodemon.json,electron-builder.yml}"
+      "!**/{*.yaml,*.yml,nodemon.json,electron-builder.yml}",
+      "!korean-input-test.html",
+      "!korean-validation-test.html",
+      "!test-formatting.html"
     ]
   },
   "keywords": [

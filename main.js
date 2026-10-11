@@ -9,7 +9,9 @@ const TIMETABLE_DATA_PATH = path.join(app.getPath('userData'), 'timetable-conten
 const SNAPSHOTS_DATA_PATH = path.join(app.getPath('userData'), 'snapshots-content.json');
 const APP_SETTINGS_DATA_PATH = path.join(app.getPath('userData'), 'app-settings.json');
 const SESSION_STATE_PATH = path.join(app.getPath('userData'), 'session-state.json');
+const DRAWINGS_DIR = path.join(app.getPath('userData'), 'drawings');
 const ICON_PATH = path.join(__dirname, 'icons', 'favicon.ico');
+const PNG_ICON_PATH = path.join(__dirname, 'icons', 'chalkboard-icon.png');
 
 const DATA_FILE_MAP = {
   'chalkboard-data': CHALKBOARD_DATA_PATH,
@@ -18,13 +20,56 @@ const DATA_FILE_MAP = {
   'app-settings': APP_SETTINGS_DATA_PATH
 };
 
+const gotLock = app.requestSingleInstanceLock();
+if (!gotLock) {
+  app.quit();
+}
+
 let mainWindow;
 let tray = null;
 let isQuitting = false;
+let windowSettingsSaveTimer = null;
 let startupState = {
   wasUncleanExit: false,
   startedAt: Date.now()
 };
+
+function ensureDir(dirPath) {
+  try {
+    fs.mkdirSync(dirPath, { recursive: true });
+  } catch (error) {
+    console.error(`Failed to create directory: ${dirPath}`, error);
+  }
+}
+
+function writeFileAtomic(filePath, data, encoding = 'utf-8') {
+  const tmpPath = `${filePath}.${process.pid}.tmp`;
+  try {
+    ensureDir(path.dirname(filePath));
+    if (encoding) {
+      fs.writeFileSync(tmpPath, data, encoding);
+    } else {
+      fs.writeFileSync(tmpPath, data);
+    }
+    try {
+      fs.renameSync(tmpPath, filePath);
+    } catch (renameError) {
+      fs.copyFileSync(tmpPath, filePath);
+      fs.unlinkSync(tmpPath);
+    }
+    return true;
+  } catch (error) {
+    try {
+      if (fs.existsSync(tmpPath)) {
+        fs.unlinkSync(tmpPath);
+      }
+    } catch (cleanupError) {
+      // Ignore temp cleanup errors.
+    }
+    console.error(`Failed to write file: ${filePath}`, error);
+    return false;
+  }
+}
 
 function readJsonFile(filePath) {
   try {
@@ -40,13 +85,43 @@ function readJsonFile(filePath) {
 }
 
 function writeJsonFile(filePath, data) {
-  try {
-    fs.writeFileSync(filePath, JSON.stringify(data), 'utf-8');
-    return true;
-  } catch (error) {
-    console.error(`Failed to write JSON: ${filePath}`, error);
-    return false;
+  return writeFileAtomic(filePath, JSON.stringify(data), 'utf-8');
+}
+
+function sanitizeDrawingName(name) {
+  const base = path.basename(String(name || '')).replace(/[^a-zA-Z0-9._-]/g, '');
+  if (!base || base === '.' || base === '..') {
+    return null;
   }
+  return base.endsWith('.png') ? base : `${base}.png`;
+}
+
+function drawingPathFor(name) {
+  const safeName = sanitizeDrawingName(name);
+  if (!safeName) {
+    return null;
+  }
+  return path.join(DRAWINGS_DIR, safeName);
+}
+
+function dataUrlToBuffer(dataUrl) {
+  if (typeof dataUrl !== 'string' || !dataUrl.startsWith('data:')) {
+    return null;
+  }
+  const comma = dataUrl.indexOf(',');
+  if (comma < 0) {
+    return null;
+  }
+  try {
+    return Buffer.from(dataUrl.slice(comma + 1), 'base64');
+  } catch (error) {
+    console.error('Failed to decode drawing data URL', error);
+    return null;
+  }
+}
+
+function bufferToPngDataUrl(buffer) {
+  return `data:image/png;base64,${buffer.toString('base64')}`;
 }
 
 function getCurrentDisplay() {
@@ -61,6 +136,53 @@ function getDisplayId(display) {
     return null;
   }
   return String(display.id);
+}
+
+function boundsOverlapWorkArea(bounds, workArea, minOverlap = 80) {
+  if (!bounds || !workArea) {
+    return false;
+  }
+  const overlapW = Math.min(bounds.x + bounds.width, workArea.x + workArea.width) - Math.max(bounds.x, workArea.x);
+  const overlapH = Math.min(bounds.y + bounds.height, workArea.y + workArea.height) - Math.max(bounds.y, workArea.y);
+  return overlapW > minOverlap && overlapH > minOverlap;
+}
+
+function isBoundsOnAnyDisplay(bounds) {
+  return screen.getAllDisplays().some((display) => boundsOverlapWorkArea(bounds, display.workArea));
+}
+
+function clampBoundsToDisplay(bounds, display) {
+  const workArea = display.workArea;
+  const width = Math.min(Math.max(360, bounds.width || 1400), workArea.width);
+  const height = Math.min(Math.max(240, bounds.height || 900), workArea.height);
+  const x = Math.min(Math.max(bounds.x, workArea.x), workArea.x + workArea.width - width);
+  const y = Math.min(Math.max(bounds.y, workArea.y), workArea.y + workArea.height - height);
+  return { x: Math.round(x), y: Math.round(y), width: Math.round(width), height: Math.round(height) };
+}
+
+function resolveUsableBounds(bounds, preferredDisplayId) {
+  if (!bounds) {
+    return null;
+  }
+
+  const displays = screen.getAllDisplays();
+  const preferred = displays.find((display) => String(display.id) === String(preferredDisplayId));
+  if (preferred && boundsOverlapWorkArea(bounds, preferred.workArea)) {
+    return clampBoundsToDisplay(bounds, preferred);
+  }
+
+  const matching = displays.find((display) => boundsOverlapWorkArea(bounds, display.workArea));
+  if (matching) {
+    return clampBoundsToDisplay(bounds, matching);
+  }
+
+  const fallback = preferred || screen.getPrimaryDisplay();
+  return clampBoundsToDisplay({
+    x: fallback.workArea.x,
+    y: fallback.workArea.y,
+    width: Math.min(bounds.width || 1400, fallback.workArea.width),
+    height: Math.min(bounds.height || 900, fallback.workArea.height)
+  }, fallback);
 }
 
 function initSessionState() {
@@ -88,27 +210,33 @@ function markSessionClosed() {
 function loadWindowSettings() {
   try {
     const modernData = readJsonFile(WINDOW_SETTINGS_PATH);
-    const legacyData = modernData ? null : readJsonFile(LEGACY_WINDOW_SETTINGS_PATH);
-    const data = modernData || legacyData;
+    const legacyLooksLikeWindow = !modernData ? readJsonFile(LEGACY_WINDOW_SETTINGS_PATH) : null;
+    const data = modernData || (
+      legacyLooksLikeWindow && (legacyLooksLikeWindow.bounds || legacyLooksLikeWindow.perDisplayBounds)
+        ? legacyLooksLikeWindow
+        : null
+    );
 
     if (!data) {
       return;
     }
 
     if (typeof data.isAlwaysOnTop === 'boolean') {
-      mainWindow.setAlwaysOnTop(data.isAlwaysOnTop);
+      applyAlwaysOnTop(data.isAlwaysOnTop);
     }
 
     if (data.perDisplayBounds && data.lastDisplayId) {
       const savedBounds = data.perDisplayBounds[data.lastDisplayId];
-      if (savedBounds) {
-        mainWindow.setBounds(savedBounds);
+      const usable = resolveUsableBounds(savedBounds, data.lastDisplayId);
+      if (usable) {
+        mainWindow.setBounds(usable);
         return;
       }
     }
 
-    if (data.bounds) {
-      mainWindow.setBounds(data.bounds);
+    const usable = resolveUsableBounds(data.bounds, data.lastDisplayId);
+    if (usable) {
+      mainWindow.setBounds(usable);
     }
   } catch (error) {
     console.error('Failed to load window settings:', error);
@@ -137,6 +265,35 @@ function saveWindowSettings() {
   writeJsonFile(WINDOW_SETTINGS_PATH, data);
 }
 
+function scheduleSaveWindowSettings() {
+  if (windowSettingsSaveTimer) {
+    clearTimeout(windowSettingsSaveTimer);
+  }
+  windowSettingsSaveTimer = setTimeout(() => {
+    windowSettingsSaveTimer = null;
+    saveWindowSettings();
+  }, 250);
+}
+
+function applyAlwaysOnTop(value) {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return;
+  }
+
+  const enabled = Boolean(value);
+  try {
+    mainWindow.setAlwaysOnTop(enabled, 'floating');
+  } catch (error) {
+    mainWindow.setAlwaysOnTop(enabled);
+  }
+
+  try {
+    mainWindow.setVisibleOnAllWorkspaces(enabled, { visibleOnFullScreen: true });
+  } catch (error) {
+    // Some platforms reject visibleOnFullScreen.
+  }
+}
+
 function moveWindowToDisplay(displayId) {
   if (!mainWindow || mainWindow.isDestroyed()) {
     return false;
@@ -152,23 +309,31 @@ function moveWindowToDisplay(displayId) {
 
   const settings = readJsonFile(WINDOW_SETTINGS_PATH) || {};
   const savedBounds = settings.perDisplayBounds && settings.perDisplayBounds[targetId];
+  const usable = resolveUsableBounds(savedBounds || {
+    x: targetDisplay.workArea.x,
+    y: targetDisplay.workArea.y,
+    width: Math.min(mainWindow.getBounds().width, targetDisplay.workArea.width),
+    height: Math.min(mainWindow.getBounds().height, targetDisplay.workArea.height)
+  }, targetId) || clampBoundsToDisplay(mainWindow.getBounds(), targetDisplay);
 
-  if (savedBounds) {
-    mainWindow.setBounds(savedBounds);
-  } else {
-    const currentBounds = mainWindow.getBounds();
-    const workArea = targetDisplay.workArea;
-    const width = Math.min(currentBounds.width, workArea.width);
-    const height = Math.min(currentBounds.height, workArea.height);
-    const x = Math.round(workArea.x + (workArea.width - width) / 2);
-    const y = Math.round(workArea.y + (workArea.height - height) / 2);
-    mainWindow.setBounds({ x, y, width, height });
-  }
-
+  mainWindow.setBounds(usable);
   mainWindow.show();
   mainWindow.focus();
   saveWindowSettings();
   return true;
+}
+
+function resolveTrayIcon() {
+  const pngExists = fs.existsSync(PNG_ICON_PATH);
+  const icoExists = fs.existsSync(ICON_PATH);
+  const preferred = process.platform === 'win32'
+    ? (icoExists ? ICON_PATH : PNG_ICON_PATH)
+    : (pngExists ? PNG_ICON_PATH : ICON_PATH);
+
+  if (!preferred || !fs.existsSync(preferred)) {
+    return nativeImage.createEmpty();
+  }
+  return nativeImage.createFromPath(preferred);
 }
 
 function createWindow() {
@@ -198,15 +363,19 @@ function createWindow() {
   loadWindowSettings();
   createTray();
 
-  mainWindow.on('close', () => {
+  mainWindow.on('close', (event) => {
     saveWindowSettings();
+    if (!isQuitting) {
+      event.preventDefault();
+      mainWindow.hide();
+    }
   });
 
-  mainWindow.on('move', saveWindowSettings);
-  mainWindow.on('resize', saveWindowSettings);
+  mainWindow.on('move', scheduleSaveWindowSettings);
+  mainWindow.on('resize', scheduleSaveWindowSettings);
 }
 
-function requestSaveBeforeQuit(timeoutMs = 3000) {
+function requestSaveBeforeQuit(timeoutMs = 8000) {
   if (!mainWindow || mainWindow.isDestroyed()) {
     return Promise.resolve();
   }
@@ -241,28 +410,31 @@ function requestSaveBeforeQuit(timeoutMs = 3000) {
   });
 }
 
+function showMainWindow() {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return;
+  }
+  if (mainWindow.isMinimized()) {
+    mainWindow.restore();
+  }
+  mainWindow.show();
+  mainWindow.focus();
+}
+
 function createTray() {
   if (tray) {
     return;
   }
 
   try {
-    const trayIcon = fs.existsSync(ICON_PATH)
-      ? nativeImage.createFromPath(ICON_PATH)
-      : nativeImage.createEmpty();
-
-    tray = new Tray(trayIcon);
+    tray = new Tray(resolveTrayIcon());
     tray.setToolTip('화면 칠판');
 
     const contextMenu = Menu.buildFromTemplate([
       {
         label: '칠판 표시',
         click: () => {
-          if (!mainWindow) {
-            return;
-          }
-          mainWindow.show();
-          mainWindow.focus();
+          showMainWindow();
         }
       },
       { type: 'separator' },
@@ -277,15 +449,14 @@ function createTray() {
     tray.setContextMenu(contextMenu);
 
     tray.on('click', () => {
-      if (!mainWindow) {
+      if (!mainWindow || mainWindow.isDestroyed()) {
         return;
       }
 
       if (mainWindow.isVisible()) {
         mainWindow.hide();
       } else {
-        mainWindow.show();
-        mainWindow.focus();
+        showMainWindow();
       }
     });
   } catch (error) {
@@ -293,27 +464,28 @@ function createTray() {
   }
 }
 
-app.on('ready', () => {
-  initSessionState();
-  createWindow();
+if (gotLock) {
+  app.on('second-instance', () => {
+    showMainWindow();
+  });
 
-  if (app.isPackaged) {
-    app.setLoginItemSettings({
-      openAtLogin: true,
-      path: process.execPath,
-      args: []
-    });
-  }
+  app.on('ready', () => {
+    ensureDir(DRAWINGS_DIR);
+    initSessionState();
+    createWindow();
+  });
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       createWindow();
+    } else {
+      showMainWindow();
     }
   });
-});
+}
 
 app.on('before-quit', async (event) => {
-  if (isQuitting) {
+  if (!gotLock || isQuitting) {
     return;
   }
 
@@ -337,21 +509,20 @@ app.on('before-quit', async (event) => {
 });
 
 app.on('will-quit', () => {
+  if (!gotLock) {
+    return;
+  }
   markSessionClosed();
 });
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
+  if (process.platform !== 'darwin' && isQuitting) {
     app.quit();
   }
 });
 
 ipcMain.on('set-always-on-top', (event, value) => {
-  if (!mainWindow) {
-    return;
-  }
-
-  mainWindow.setAlwaysOnTop(Boolean(value));
+  applyAlwaysOnTop(value);
   saveWindowSettings();
 });
 
@@ -402,7 +573,9 @@ ipcMain.on('maximize-window', () => {
 });
 
 ipcMain.on('close-window', () => {
-  app.quit();
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.hide();
+  }
 });
 
 ipcMain.handle('save-data', (event, key, data) => {
@@ -410,14 +583,7 @@ ipcMain.handle('save-data', (event, key, data) => {
   if (!filePath) {
     return false;
   }
-
-  try {
-    fs.writeFileSync(filePath, data, 'utf-8');
-    return true;
-  } catch (error) {
-    console.error(`Failed to save data: ${key}`, error);
-    return false;
-  }
+  return writeFileAtomic(filePath, data, 'utf-8');
 });
 
 ipcMain.handle('load-data', (event, key) => {
@@ -434,5 +600,45 @@ ipcMain.handle('load-data', (event, key) => {
   } catch (error) {
     console.error(`Failed to load data: ${key}`, error);
     return null;
+  }
+});
+
+ipcMain.handle('save-drawing', (event, name, dataUrl) => {
+  const filePath = drawingPathFor(name);
+  if (!filePath) {
+    return false;
+  }
+  const buffer = dataUrlToBuffer(dataUrl);
+  if (!buffer) {
+    return false;
+  }
+  return writeFileAtomic(filePath, buffer, null);
+});
+
+ipcMain.handle('load-drawing', (event, name) => {
+  const filePath = drawingPathFor(name);
+  if (!filePath || !fs.existsSync(filePath)) {
+    return null;
+  }
+  try {
+    const buffer = fs.readFileSync(filePath);
+    return bufferToPngDataUrl(buffer);
+  } catch (error) {
+    console.error(`Failed to load drawing: ${name}`, error);
+    return null;
+  }
+});
+
+ipcMain.handle('delete-drawing', (event, name) => {
+  const filePath = drawingPathFor(name);
+  if (!filePath || !fs.existsSync(filePath)) {
+    return true;
+  }
+  try {
+    fs.unlinkSync(filePath);
+    return true;
+  } catch (error) {
+    console.error(`Failed to delete drawing: ${name}`, error);
+    return false;
   }
 });

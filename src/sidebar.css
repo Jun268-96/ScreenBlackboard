@@ -2,10 +2,10 @@
 
 .sidebar {
   position: fixed;
-  top: 40px; /* titlebar height */
-  right: -500px;
-  width: 500px;
-  height: calc(100vh - 40px);
+  top: var(--titlebar-height, 3rem);
+  right: calc(-1 * var(--sidebar-width, 500px));
+  width: var(--sidebar-width, 500px);
+  height: calc(100vh - var(--titlebar-height, 3rem));
   background-color: #1a1a1a;
   border-left: 1px solid #444;
   transition: right 0.3s ease;
@@ -37,7 +37,7 @@
 }
 
 .sidebar.open + .sidebar-toggle {
-  right: 500px;
+  right: var(--sidebar-width, 500px);
 }
 
 .sidebar-toggle:hover {
@@ -85,7 +85,7 @@
   display: flex;
   flex-direction: column;
   gap: var(--period-gap);
-  overflow: hidden;
+  overflow: auto;
 }
 
 .timetable-item {
@@ -182,9 +182,8 @@
   font-size: inherit;
 }
 
-/* Tab area adjustment when sidebar is open */
-.sidebar.open ~ #tabContents .tab-content {
-  margin-right: 500px;
+body.sidebar-open #tabContents {
+  margin-right: var(--sidebar-width, 500px);
 }
 
 /* Scrollbar */
